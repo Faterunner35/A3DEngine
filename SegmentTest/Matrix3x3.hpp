@@ -36,17 +36,17 @@ public:
 
 	// ---- Утилиты ----
 
-	inline Matrix3x3 Identity3() {
+	static Matrix3x3 Identity3() {
 		return Matrix3x3(1, 0, 0, 0, 1, 0, 0, 0, 1);
 	}
 
 	
 
-	inline Vector<3, double> GetRow(const Matrix3x3& m, int32_t r) {
-		return Vector<3, double>{ m[(r, 0)], m[(r, 1)], m[(r, 2)] };
+	static Vector<3, double> GetRow(const Matrix3x3& m, int32_t r) {
+		return Vector<3, double>{ m(r, 0), m(r, 1), m(r, 2) };
 	}
-	inline Vector<3, double> GetColumn(const Matrix3x3& m, int32_t c) {
-		return Vector<3, double>{ m[(0, c)], m[(1, c)], m[(2, c)] };
+	static Vector<3, double> GetColumn(const Matrix3x3& m, int32_t c) {
+		return Vector<3, double>{ m(0, c), m(1, c), m(2, c) };
 	}
 
 	
@@ -111,8 +111,8 @@ inline Matrix3x3 operator*(const Matrix3x3& a, const Matrix3x3& b) {
 	for (int32_t i = 0; i < 3; ++i)
 		for (int32_t j = 0; j < 3; ++j) {
 			double s = 0.0;
-			for (int32_t k = 0; k < 3; ++k) s += a[(i, k)] * b[(k, j)];
-			r[(i, j)] = s;
+			for (int32_t k = 0; k < 3; ++k) s += a(i, k) * b(k, j);
+			r(i, j) = s;
 		}
 	return r;
 }
@@ -156,9 +156,9 @@ inline Matrix3x3 Transpose(const Matrix3x3& m) {
 
 inline bool HasScale(const Matrix3x3& m, double tolerance = 1e-4) {
 	for (int32_t c = 0; c < 3; ++c) {
-		const double len2 = m[(0, c)] * m[(0, c)]
-			+ m[(1, c)] * m[(1, c)]
-			+ m[(2, c)] * m[(2, c)];
+		const double len2 = m(0, c) * m(0, c)
+			+ m(1, c) * m(1, c)
+			+ m(2, c) * m(2, c);
 		if (std::abs(len2 - 1.0) > tolerance) return true;
 	}
 	return false;
@@ -171,7 +171,7 @@ inline bool IsOrthonormal(const Matrix3x3& m, double tolerance = 1e-6) {
 	for (int32_t a = 0; a < 3; ++a)
 		for (int32_t b = a + 1; b < 3; ++b) {
 			double d = 0.0;
-			for (int32_t r = 0; r < 3; ++r) d += m[(r, a)] * m[(r, b)];
+			for (int32_t r = 0; r < 3; ++r) d += m(r, a) * m(r, b);
 			if (std::abs(d) > tolerance) return false;
 		}
 	// det = +1, а не -1: иначе это отражение, а не поворот

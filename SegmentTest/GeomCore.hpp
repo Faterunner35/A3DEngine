@@ -1,4 +1,5 @@
-﻿     #include"GeomIntersector.h"
+﻿#pragma once
+     #include"GeomIntersector.h"
 	 #include"Primitives.h"
 	 #include"Ray.h"
 	 #include<optional>

@@ -1,6 +1,6 @@
 ﻿#pragma once
-#include "affine4x3.hpp"
-#include "quaternion.hpp"
+#include "Affine4X3.hpp"
+#include "Quaternion.hpp"
 #include"Matrix3x3.hpp"
 #include <cmath>
 #include <cassert>

@@ -1,4 +1,5 @@
-﻿
+﻿#pragma once
+
 #include "Quaternion.hpp"
 #include"PrimitiveTransform.hpp"
 // подстрой под имя своего файла конверсий
