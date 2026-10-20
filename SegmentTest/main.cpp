@@ -18,6 +18,7 @@
 //    3.1  Глубокая цепочка 1k..20k уровней: точность против аналитического ответа
 //    3.2  Широкое дерево: 100k детей у одного корня, гибель корня
 //    3.3  Живой мир: рождение, смерть, перевешивание, анимация каждый кадр
+//         (10k, 50k; 3.3b — 200k и 500k со сверкой с эталоном и формой иерархии)
 //    3.4  Стоимость отдельных операций: SetParent, перестройка порядка, GC
 //
 //  Режимы: без аргументов — всё; --tests-only; --bench; --stress
@@ -476,6 +477,33 @@ static double CheckAllAgainstReference(const TransformComponent& tc, const std::
     return worst;
 }
 
+// Форма иерархии: число корней, максимальная и средняя глубина. O(n) с мемоизацией.
+struct HierarchyShape { size_t roots; uint32_t maxDepth; double avgDepth; };
+static HierarchyShape MeasureHierarchy(const TransformComponent& tc, const std::vector<Entity>& alive,
+                                       uint32_t capacity)
+{
+    std::vector<uint32_t> depth(capacity, ~0u), depthGen(capacity, ~0u);
+    std::vector<Entity> chain;
+    HierarchyShape h{ 0, 0, 0.0 };
+    for (Entity e : alive) {
+        Entity a = e;
+        while (!a.IsNull() && depthGen[a.index] != a.generation) { chain.push_back(a); a = tc.Parent(a); }
+        uint32_t d = a.IsNull() ? ~0u : depth[a.index];          // ~0u + 1 == 0 для корня
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            d = d + 1;
+            depth[it->index] = d;
+            depthGen[it->index] = it->generation;
+        }
+        chain.clear();
+        const uint32_t de = depth[e.index];
+        h.roots += (de == 0);
+        h.maxDepth = std::max(h.maxDepth, de);
+        h.avgDepth += de;
+    }
+    if (!alive.empty()) h.avgDepth /= double(alive.size());
+    return h;
+}
+
 struct FrameStats { double p50, p99, max; };
 static FrameStats Stats(std::vector<double> v)
 {
@@ -620,6 +648,11 @@ static void StressChurn(const ChurnConfig& cfg)
     tc.Update();
 
     const auto count = [&](double pct) { return size_t(alive.size() * pct / 100.0); };
+    constexpr size_t kAnimPool = 4096;                     // степень двойки
+    std::vector<V3> animPos(kAnimPool);
+    std::vector<Quaternion> animRot(kAnimPool);
+    for (size_t i = 0; i < kAnimPool; ++i) { animPos[i] = V3{ u(rng), u(rng), u(rng) }; animRot[i] = RandomQuat(rng); }
+    size_t poolIdx = 0;
     std::vector<double> frameMs, opsMs, updMs;
     double worst = 0;
     size_t created = 0, destroyed = 0, reparented = 0, rejected = 0;
@@ -642,11 +675,13 @@ static void StressChurn(const ChurnConfig& cfg)
             Entity p = (rng() % 10 == 0) ? Entity{} : alive[rng() % alive.size()];
             if (tc.SetParent(c, p)) ++reparented; else ++rejected;
         }
-        // анимация
+        // анимация: значения берутся из заранее сгенерированного пула, чтобы
+        // в «операции» попадала стоимость записи в компонент, а не генератора
         for (size_t k = count(cfg.animatePct); k > 0; --k) {
             Entity e = alive[rng() % alive.size()];
-            tc.SetPosition(e, V3{ u(rng), u(rng), u(rng) });
-            tc.SetOrientation(e, RandomQuat(rng));
+            tc.SetPosition(e, animPos[poolIdx]);
+            tc.SetOrientation(e, animRot[poolIdx]);
+            poolIdx = (poolIdx + 1) & (kAnimPool - 1);
         }
         auto b = Clock::now();
         tc.Update();
@@ -655,7 +690,8 @@ static void StressChurn(const ChurnConfig& cfg)
         updMs.push_back(Ms(b, c));
         frameMs.push_back(Ms(a, c));
 
-        if (f % 50 == 49) {
+        const int checkEvery = std::max(1, std::min(50, cfg.frames / 4));
+        if (f % checkEvery == checkEvery - 1 || f == cfg.frames - 1) {
             CHECK(tc.Size() == alive.size());
             worst = std::max(worst, CheckAllAgainstReference(tc, alive, capacity));
         }
@@ -667,6 +703,10 @@ static void StressChurn(const ChurnConfig& cfg)
                 fs.p50, fs.p99, fs.max, os.p50, us_.p50);
     std::printf("         родилось %zu, умерло %zu, перевешано %zu, отклонено циклов %zu, |W − эталон| = %.1e\n",
                 created, destroyed, reparented, rejected, worst);
+    const HierarchyShape hs = MeasureHierarchy(tc, alive, capacity);
+    std::printf("         иерархия в конце: корней %zu (%.1f%%), глубина max %u, средняя %.1f; память ≈ %.0f МБ\n",
+                hs.roots, 100.0 * hs.roots / std::max<size_t>(1, alive.size()), hs.maxDepth, hs.avgDepth,
+                alive.size() * 200.0 / (1024 * 1024));
     CHECK(worst < 1e-9);
 }
 
@@ -792,6 +832,12 @@ int main(int argc, char** argv)
         StressChurn({ 50'000, 300, 0.5, 0.5, 0.5, 10 });
         StressChurn({ 50'000, 300, 0.0, 0.0, 0.0, 30 });     // только анимация
         StressChurn({ 50'000, 300, 2.0, 2.0, 5.0, 30 });     // тяжёлый режим
+
+        std::printf("\n[3.3b] Живой мир на сотнях тысяч сущностей\n");
+        StressChurn({ 200'000, 120, 0.5, 0.5, 0.5, 10 });
+        StressChurn({ 200'000, 120, 0.0, 0.0, 0.0, 10 });    // без смены структуры — только анимация
+        StressChurn({ 500'000,  60, 0.5, 0.5, 0.5, 10 });
+        StressChurn({ 500'000,  60, 2.0, 2.0, 5.0, 30 });    // тяжёлый режим
 
         std::printf("\n[3.4] Стоимость операций\n");
         StressOperationCosts(100'000);

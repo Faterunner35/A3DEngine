@@ -102,12 +102,18 @@ Memory per transform is 200 bytes: 80 for local TRS, 96 for the world 3×4 matri
 | Live world, 50 000 entities, every frame: 0.5 % die, 0.5 % spawn, 0.5 % reparent, 10 % animate | frame p50 4.2 ms, p99 6.5 ms; bit-identical to the reference |
 | Heavy mode, 50 000 entities: 2 % die, 2 % spawn, 5 % reparent, 30 % animate | frame p50 6.7 ms, p99 11.3 ms |
 | 100 000 entities: one `SetParent` that breaks the order | next `Update` 8.1 ms instead of 2.9 ms (full reorder) |
+| Live world, **200 000** entities, 0.5 % die / spawn / reparent, 10 % animate | frame p50 49 ms, p99 80 ms; bit-identical to the reference |
+| **200 000** entities, animation only (no structural change) | frame p50 31 ms (`Update` 25 ms) |
+| Live world, **500 000** entities, 0.5 % die / spawn / reparent, 10 % animate | frame p50 156 ms, p99 239 ms; bit-identical to the reference |
+| **500 000** entities, heavy mode (2 % / 2 % / 5 % / 30 %) | frame p50 288 ms; 1.48 M reparents over 60 frames |
 
 Known costs these tests expose:
 - `SetParent` walks up the ancestors to reject cycles, so it is O(depth). Building a 20 000-deep chain node by node is quadratic (1.3 s).
 - Any `Destroy`, and any reparent onto a node further right in the array, invalidates the whole order. In a world with deaths every frame, the reorder is paid every frame.
 
-Planned fixes: keep a depth per entity for O(1) cycle rejection in the common case, and make the reorder incremental (move the affected subtree only).
+- Beyond ~100 000 entities a full `Update` becomes memory-bound. When the hierarchy is built incrementally, the arrays stay in insertion order rather than depth order, so reading the parent's matrix is a random access across 40–95 MB. At 200 000 entities this alone costs about 25 ms per frame, even when only 10 % of the transforms changed.
+
+Planned fixes: keep a depth per entity for O(1) cycle rejection in the common case; make the reorder incremental (move the affected subtree only); recompute only dirty subtrees; order siblings so that children follow their parent closely in memory; update level by level across threads.
 
 ---
 
