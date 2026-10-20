@@ -5,7 +5,7 @@
 #include <cassert>
 #include <optional>
 #include "Geomerty.h"
-#include "matrix3x3.hpp"   // в проекте — твой Vector<>
+#include "Matrix3x3.hpp"   // в проекте — твой Vector<>
 
 namespace mathx {
 

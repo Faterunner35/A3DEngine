@@ -80,9 +80,9 @@ namespace mathx {
 		const int32_t j = (axis + 1) % 3, k = (axis + 2) % 3;
 
 		Matrix3x3 m;                        // конструктор по умолчанию обнуляет
-		m[(axis, axis)] = 1.0;
-		m[(j, j)] = c;   m[(j, k)] = -s;
-		m[(k, j)] = s;   m[(k, k)] = c;
+		m(axis, axis) = 1.0;
+		m(j, j) = c;   m(j, k) = -s;
+		m(k, j) = s;   m(k, k) = c;
 		return m;
 	}
 
@@ -98,9 +98,9 @@ namespace mathx {
 		const int32_t j = (axis + 1) % 3, k = (axis + 2) % 3;
 
 		for (int32_t col = 0; col < 3; ++col) {
-			const double vj = m[(j, col)], vk = m[(k, col)];
-			m[(j, col)] = c * vj - s * vk;
-			m[(k, col)] = s * vj + c * vk;
+			const double vj = m(j, col), vk = m(k, col);
+			m(j, col) = c * vj - s * vk;
+			m(k, col) = s * vj + c * vk;
 		}
 	}
 

@@ -1,4 +1,30 @@
-
+# Visual Studio
 .vs/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+*.vsidx
+ipch/
+x64/
+x86/
+Debug/
+Release/
 
-.vs/
+# CMake
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+
+# Объектные и бинарные файлы
+*.obj
+*.o
+*.pdb
+*.ilk
+*.idb
+*.exe
+*.lib
+*.exp

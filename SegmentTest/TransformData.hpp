@@ -1,4 +1,5 @@
-﻿#include"Geomerty.h"
+﻿#pragma once
+#include"Geomerty.h"
 #include"Quaternion.hpp"
 #include"Matrix.h"
 #include"Affine4X3.hpp"

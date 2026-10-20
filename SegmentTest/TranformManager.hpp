@@ -1,4 +1,5 @@
-﻿#include"Geomerty.h"
+﻿#pragma once
+#include"Geomerty.h"
 #include"Matrix3x3.hpp"
 #include"Matrxi4x4.hpp"
 #include"Entity.hpp"
