@@ -17,7 +17,9 @@ option(A3D_SANITIZERS "AddressSanitizer + UBSan (GCC/Clang, Debug)" OFF)
 #  Ядро: header-only математика, геометрия, ECS
 # -----------------------------------------------------------------------------
 add_library(a3d_core INTERFACE)
-target_include_directories(a3d_core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/SegmentTest)
+# Папку SegmentTest НЕ добавляем в пути поиска: в ней лежит свой Math.h, и на
+# Windows (регистр не различается) <cmath> подхватил бы его вместо системного
+# <math.h>. Заголовки подключаются в кавычках относительно своего файла.
 
 if(MSVC)
     target_compile_options(a3d_core INTERFACE /utf-8 /W3 /permissive- /Zc:__cplusplus)
