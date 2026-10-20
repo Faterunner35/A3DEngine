@@ -1,0 +1,39 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows MSVC 2022
+            os: windows-latest
+          - name: Linux GCC
+            os: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Tests (CTest)
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Stress (hierarchy)
+        shell: bash
+        run: |
+          if [ -f build/Release/engine_tests.exe ]; then
+            build/Release/engine_tests.exe --stress
+          else
+            build/engine_tests --stress
+          fi
