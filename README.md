@@ -50,9 +50,26 @@ ctest --test-dir build -C Release          # correctness tests only
 #   Windows: build\Release\engine_tests.exe
 ```
 
-Visual Studio 2022 can open the folder directly (*File → Open → Folder*) and picks up `CMakeLists.txt`. The original `SegmentTest.sln` is still there.
+### Targets
 
-The single target `engine_tests` (`SegmentTest/main.cpp`) holds the correctness tests, the benchmark and the hierarchy stress test for `EntityPool` + `TransformComponent`.
+| Target | Source | What it is |
+|---|---|---|
+| `a3d_core` | everything in `SegmentTest/` except entry points | static library: the engine |
+| `engine_tests` | `SegmentTest/main.cpp` | correctness tests, benchmark, hierarchy stress for `EntityPool` + `TransformComponent` |
+| `pga_demo` | `SegmentTest/PgaDemo.cpp` | PGA Cl(3,0,1) demo: plane through three points, geometric product, meet |
+
+CMake is the only build description. There is no hand-written `.sln`.
+
+### Visual Studio 2022
+
+1. *File → Open → Folder…* → the repository root. VS reads `CMakeLists.txt` and `CMakePresets.json`.
+2. Pick `x64 Debug` or `x64 Release` in the configuration box, `engine_tests.exe` in the startup item box, F5.
+
+**Adding a source file.** In Solution Explorer switch to *Folder View* (the "Switch between solutions and available views" button), right-click `SegmentTest` → *Add → New File…* (or *Add → Existing Item…*). Nothing has to be edited in `CMakeLists.txt`: sources are collected with `file(GLOB_RECURSE … CONFIGURE_DEPENDS)`, so on the next build CMake notices the new file, regenerates and compiles it into `a3d_core`. Subfolders of `SegmentTest/` work too. Deleting or renaming a file is picked up the same way.
+
+A new file with its own `main()` is a new program, not part of the engine: add it to `A3D_ENTRY_POINTS` and give it an `add_executable` in `CMakeLists.txt`.
+
+If you prefer a classic solution (for example for the profiler): `cmake --preset vs2022` creates `out/build/vs2022/A3DEngine.sln`. That solution is generated output, so don't add files through its *Project → Add New Item* (it would put them under `out/`); create them in `SegmentTest/` and the `ZERO_CHECK` project picks them up on the next build.
 
 | Option | Effect |
 |---|---|
@@ -102,12 +119,18 @@ Memory per transform is 200 bytes: 80 for local TRS, 96 for the world 3×4 matri
 | Live world, 50 000 entities, every frame: 0.5 % die, 0.5 % spawn, 0.5 % reparent, 10 % animate | frame p50 4.2 ms, p99 6.5 ms; bit-identical to the reference |
 | Heavy mode, 50 000 entities: 2 % die, 2 % spawn, 5 % reparent, 30 % animate | frame p50 6.7 ms, p99 11.3 ms |
 | 100 000 entities: one `SetParent` that breaks the order | next `Update` 8.1 ms instead of 2.9 ms (full reorder) |
+| Live world, **200 000** entities, 0.5 % die / spawn / reparent, 10 % animate | frame p50 49 ms, p99 80 ms; bit-identical to the reference |
+| **200 000** entities, animation only (no structural change) | frame p50 31 ms (`Update` 25 ms) |
+| Live world, **500 000** entities, 0.5 % die / spawn / reparent, 10 % animate | frame p50 156 ms, p99 239 ms; bit-identical to the reference |
+| **500 000** entities, heavy mode (2 % / 2 % / 5 % / 30 %) | frame p50 288 ms; 1.48 M reparents over 60 frames |
 
 Known costs these tests expose:
 - `SetParent` walks up the ancestors to reject cycles, so it is O(depth). Building a 20 000-deep chain node by node is quadratic (1.3 s).
 - Any `Destroy`, and any reparent onto a node further right in the array, invalidates the whole order. In a world with deaths every frame, the reorder is paid every frame.
 
-Planned fixes: keep a depth per entity for O(1) cycle rejection in the common case, and make the reorder incremental (move the affected subtree only).
+- Beyond ~100 000 entities a full `Update` becomes memory-bound. When the hierarchy is built incrementally, the arrays stay in insertion order rather than depth order, so reading the parent's matrix is a random access across 40–95 MB. At 200 000 entities this alone costs about 25 ms per frame, even when only 10 % of the transforms changed.
+
+Planned fixes: keep a depth per entity for O(1) cycle rejection in the common case; make the reorder incremental (move the affected subtree only); recompute only dirty subtrees; order siblings so that children follow their parent closely in memory; update level by level across threads.
 
 ---
 
