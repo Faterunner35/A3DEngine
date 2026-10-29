@@ -37,7 +37,7 @@ public:
 	Multivector() = default;
 
 	static Multivector e(int i) {                 // базисный вектор e_i (1..DIM)
-		Multivector m; m.c[1u << (i - 1)] = 1.0f; return m;
+		Multivector m; m.c[std::size_t{1} << (i - 1)] = 1.0f; return m;
 	}
 	static Multivector scalar(float s) {
 		Multivector m; m.c[0] = s; return m;

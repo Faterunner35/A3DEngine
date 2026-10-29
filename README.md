@@ -50,9 +50,26 @@ ctest --test-dir build -C Release          # correctness tests only
 #   Windows: build\Release\engine_tests.exe
 ```
 
-Visual Studio 2022 can open the folder directly (*File → Open → Folder*) and picks up `CMakeLists.txt`. The original `SegmentTest.sln` is still there.
+### Targets
 
-The single target `engine_tests` (`SegmentTest/main.cpp`) holds the correctness tests, the benchmark and the hierarchy stress test for `EntityPool` + `TransformComponent`.
+| Target | Source | What it is |
+|---|---|---|
+| `a3d_core` | everything in `SegmentTest/` except entry points | static library: the engine |
+| `engine_tests` | `SegmentTest/main.cpp` | correctness tests, benchmark, hierarchy stress for `EntityPool` + `TransformComponent` |
+| `pga_demo` | `SegmentTest/PgaDemo.cpp` | PGA Cl(3,0,1) demo: plane through three points, geometric product, meet |
+
+CMake is the only build description. There is no hand-written `.sln`.
+
+### Visual Studio 2022
+
+1. *File → Open → Folder…* → the repository root. VS reads `CMakeLists.txt` and `CMakePresets.json`.
+2. Pick `x64 Debug` or `x64 Release` in the configuration box, `engine_tests.exe` in the startup item box, F5.
+
+**Adding a source file.** In Solution Explorer switch to *Folder View* (the "Switch between solutions and available views" button), right-click `SegmentTest` → *Add → New File…* (or *Add → Existing Item…*). Nothing has to be edited in `CMakeLists.txt`: sources are collected with `file(GLOB_RECURSE … CONFIGURE_DEPENDS)`, so on the next build CMake notices the new file, regenerates and compiles it into `a3d_core`. Subfolders of `SegmentTest/` work too. Deleting or renaming a file is picked up the same way.
+
+A new file with its own `main()` is a new program, not part of the engine: add it to `A3D_ENTRY_POINTS` and give it an `add_executable` in `CMakeLists.txt`.
+
+If you prefer a classic solution (for example for the profiler): `cmake --preset vs2022` creates `out/build/vs2022/A3DEngine.sln`. That solution is generated output, so don't add files through its *Project → Add New Item* (it would put them under `out/`); create them in `SegmentTest/` and the `ZERO_CHECK` project picks them up on the next build.
 
 | Option | Effect |
 |---|---|
