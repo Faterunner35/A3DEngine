@@ -62,6 +62,50 @@ namespace mathx {
 			0.0, 0.0, 1.0, 0.0);
 	}
 
+	// ---------------------------------------------------------------------------
+	//  Обратные матрицы в явном виде — (6.37) FGED. Общее обращение 4x4 не нужно:
+	//  матрица блочно-диагональная, блоки обращаются по отдельности.
+	//
+	//      P = | diag(g/s, gy)   0 |        P^-1 = | diag(s/g, 1/gy)   0     |
+	//          |      0          M |               |      0          M^-1    |
+	//
+	//  Применение: экранная точка (X, Y, z_dev, 1) -> P^-1 -> деление на w
+	//  даёт точку в пространстве камеры (x, y, z). Так по буферу глубины
+	//  восстанавливают позицию в deferred-рендере.
+	// ---------------------------------------------------------------------------
+
+	// Обратная к MakeFrustumProjection.
+	//     M = | A  B |,   M^-1 = | 0          1   |
+	//         | 1  0 |           | (n-f)/(nf) 1/n |
+	inline Matrix4x4 MakeFrustumProjectionInverse(double fovY, double s, double n, double f,
+		ClipY clipY = ClipY::Up)
+	{
+		assert(fovY > 0.0 && fovY < 3.14159265358979 && s > 0.0 && n > 0.0 && f > n &&
+			"MakeFrustumProjectionInverse: нужны 0 < fovY < pi, s > 0, 0 < n < f");
+		const double g = 1.0 / std::tan(fovY * 0.5);
+		const double gy = (clipY == ClipY::Up) ? -g : g;
+		return Matrix4x4(s / g, 0.0, 0.0, 0.0,
+			0.0, 1.0 / gy, 0.0, 0.0,
+			0.0, 0.0, 0.0, 1.0,
+			0.0, 0.0, (n - f) / (n * f), 1.0 / n);
+	}
+
+	// Обратная к MakeReversedInfiniteProjection.
+	//     M = | 0  n |,   M^-1 = | 0    1 |
+	//         | 1  0 |           | 1/n  0 |
+	inline Matrix4x4 MakeReversedInfiniteProjectionInverse(double fovY, double s, double n,
+		ClipY clipY = ClipY::Up)
+	{
+		assert(fovY > 0.0 && fovY < 3.14159265358979 && s > 0.0 && n > 0.0 &&
+			"MakeReversedInfiniteProjectionInverse: нужны 0 < fovY < pi, s > 0, n > 0");
+		const double g = 1.0 / std::tan(fovY * 0.5);
+		const double gy = (clipY == ClipY::Up) ? -g : g;
+		return Matrix4x4(s / g, 0.0, 0.0, 0.0,
+			0.0, 1.0 / gy, 0.0, 0.0,
+			0.0, 0.0, 0.0, 1.0,
+			0.0, 0.0, 1.0 / n, 0.0);
+	}
+
 	// Глубина в пространстве камеры по значению из буфера глубины.
 	// (6.38): обращение z_dev = A + B/z для MakeFrustumProjection.
 	inline double CameraDepthFromFrustum(double zDevice, double n, double f)

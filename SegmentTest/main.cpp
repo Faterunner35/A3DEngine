@@ -307,6 +307,23 @@ static void TestProjection()
     for (int i = 0; i < 3; ++i) { const V3 q = PerspectiveDivide(Pd * tri[i]); wx[i] = q[0]; wy[i] = -q[1]; }
     const double area = (wx[1] - wx[0]) * (wy[2] - wy[0]) - (wy[1] - wy[0]) * (wx[2] - wx[0]);
     CHECK(area < 0.0);   // в координатах с y вниз отрицательная площадь = против часовой
+
+    // Обратные матрицы (6.37): P * P^-1 = I и восстановление точки по экрану и глубине
+    auto isIdentity = [](const Matrix4x4& m) {
+        for (int i = 0; i < 4; ++i) for (int j = 0; j < 4; ++j)
+            if (std::fabs(m(i, j) - (i == j ? 1.0 : 0.0)) > 1e-12) return false;
+        return true;
+    };
+    const Matrix4x4 Pdi = MakeFrustumProjectionInverse(fovY, s, n, f, ClipY::Up);
+    const Matrix4x4 Pri = MakeReversedInfiniteProjectionInverse(fovY, s, n, ClipY::Up);
+    CHECK(isIdentity(Pd * Pdi) && isIdentity(Pdi * Pd));
+    CHECK(isIdentity(Pr * Pri) && isIdentity(Pri * Pr));
+    for (const Matrix4x4* pr : { &Pd, &Pr }) {
+        const Matrix4x4& Pinv = (pr == &Pd) ? Pdi : Pri;
+        const V3 scr = PerspectiveDivide(*pr * V4{ 2.0, -1.0, 4.0, 1.0 });   // X, Y, z_dev
+        const V3 cam = PerspectiveDivide(Pinv * V4{ scr[0], scr[1], scr[2], 1.0 });
+        CHECK(near_(cam[0], 2.0, 1e-10) && near_(cam[1], -1.0, 1e-10) && near_(cam[2], 4.0, 1e-10));
+    }
 }
 
 // =============================================================================
