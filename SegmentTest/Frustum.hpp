@@ -85,14 +85,10 @@ public:
         const double g = 1.0 / mathx::Tan(fovY * 0.5);
         const double gy = (clipY == ClipY::Up) ? -g : g;
         const double k = f / (f - n);
-        Matrix4x4 P;
-        for (int32_t i = 0; i < 16; ++i) P[i] = 0.0;      // конструктор даёт единичную
-        P[M4Idx(0, 0)] = g / aspect;
-        P[M4Idx(1, 1)] = gy;
-        P[M4Idx(2, 2)] = k;
-        P[M4Idx(2, 3)] = -n * k;
-        P[M4Idx(3, 2)] = 1.0;                              // w = z
-        return P;
+        return Matrix4x4(g / aspect, 0.0, 0.0, 0.0,
+                         0.0, gy, 0.0, 0.0,
+                         0.0, 0.0, k, -n * k,
+                         0.0, 0.0, 1.0, 0.0);              // w = z
     }
 
     static Matrix4x4 MakeFrustumProjectionInverse(Radian fovY, double s, double n, double f,
