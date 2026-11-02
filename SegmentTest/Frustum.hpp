@@ -26,7 +26,9 @@ public:
     // ---- форма: сеттеры только помечают «устарело» ----------------------------
     void SetFOVy(Radian fovY)              { mFovy = fovY; InvalidateFrustum(); }
     void SetAspectRatio(double aspect)     { mAspect = aspect; InvalidateFrustum(); }
-    void SetNearClipDistance(double n)     { assert(n > 0.0); mNearDist = n; InvalidateFrustum(); }
+    // Перспектива требует n > 0, ортография — любое n < f (ящик может начинаться
+    // за камерой). Тип проекции можно задать и после n, поэтому проверка — в UpdateFrustumImpl.
+    void SetNearClipDistance(double n)     { mNearDist = n; InvalidateFrustum(); }
     void SetFarClipDistance(double f)      { mFarDist = f; InvalidateFrustum(); }   // +inf — бесконечная
     void SetOrthoWindowHeight(double h)    { mOrthoHeight = h; InvalidateFrustum(); }
     void SetFrustumOffset(const Vector<2, double>& o) { mFrustumOffset = o; InvalidateFrustum(); }
@@ -138,6 +140,12 @@ protected:
 
     void UpdateFrustumImpl() const
     {
+        if (mProjType == ProjectionType::Perspective)
+            // все лучи идут через камеру z = 0: ближняя плоскость обязана лежать перед ней
+            assert(mNearDist > 0.0 && mFarDist > mNearDist && "перспектива: нужно 0 < n < f");
+        else
+            // делим только на f - n; бесконечной ортографии не бывает (глубина линейна)
+            assert(!IsInfinite() && mFarDist > mNearDist && "ортография: нужно n < f < inf");
         double l, r, t, b;
         CalcProjectionParameters(l, r, t, b);
         const DepthParams dp = GetProjectionParamsAB();

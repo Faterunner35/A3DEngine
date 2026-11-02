@@ -940,6 +940,21 @@ static void TestFrustum()
         CHECK(isIdentity(O.GetProjectionMatrix() * O.GetInverseProjectionMatrix()));
         const Frustum::DepthParams od = O.GetProjectionParamsAB();
         CHECK(near_((od.A + od.B * 40.0 - od.A) / od.B, 40.0) && near_(od.A + od.B * n, 0.0));
+
+        // ортография с камерой внутри ящика: n = -5, f = 5 (z = 0 ничем не выделен)
+        for (DM dm : { DM::Standard, DM::Reversed }) {
+            Frustum B(ClipY::Up, dm);
+            B.SetProjectionType(Frustum::ProjectionType::Orthographic);
+            B.SetOrthoWindowHeight(10.0); B.SetAspectRatio(1.0);
+            B.SetNearClipDistance(-5.0); B.SetFarClipDistance(5.0);
+            const bool st = dm == DM::Standard;
+            auto depth = [&](double z) { const V4 c = B.GetProjectionMatrix() * V4{ 0.0, 0.0, z, 1.0 }; return c[2] / c[3]; };
+            CHECK(near_(depth(-5.0), st ? 0.0 : 1.0) && near_(depth(5.0), st ? 1.0 : 0.0) && near_(depth(0.0), 0.5));
+            CHECK(isIdentity(B.GetProjectionMatrix() * B.GetInverseProjectionMatrix()));
+            CHECK(B.IsVisible(V3{ 0.0, 0.0, -3.0 }) && B.IsVisible(V3{ 0.0, 0.0, 0.0 }));   // за камерой и в ней
+            CHECK(!B.IsVisible(V3{ 0.0, 0.0, -6.0 }) && !B.IsVisible(V3{ 0.0, 0.0, 6.0 }));
+            CHECK(near_(B.GetFrustumPlanes()[Frustum::kNear].GetDistance(), 5.0));     // z >= -5
+        }
     }
 }
 
