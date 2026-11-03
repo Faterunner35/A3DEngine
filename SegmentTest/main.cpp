@@ -27,7 +27,6 @@
 //  Запуск:  build/engine_tests   (Windows: build\Release\engine_tests.exe)
 // =============================================================================
 #include "TranformManager.hpp"
-#include "Projection.hpp"
 #include "Frustum.hpp"
 
 #include <algorithm>
@@ -267,9 +266,11 @@ static void TestProjection()
     const double g = 1.0 / std::tan(fovY * 0.5);                       // 1.7320508
     auto near_ = [](double a, double b, double eps = 1e-12) { return std::fabs(a - b) <= eps; };
     using V4 = Vector<4, double>;
+    using ClipY = Frustum::ClipY;
+    const Radian fov(fovY);
 
     // (6.36) как в листинге 6.1 (y клипа вниз, Vulkan): элементы матрицы
-    const Matrix4x4 Pv = MakeFrustumProjection(fovY, s, n, f, ClipY::Down);
+    const Matrix4x4 Pv = Frustum::MakeFrustumProjection(fov, s, n, f, ClipY::Down);
     CHECK(near_(Pv(0, 0), g / s) && near_(Pv(1, 1), g));
     CHECK(near_(Pv(2, 2), f / (f - n)) && near_(Pv(2, 3), -n * f / (f - n)));
     CHECK(Pv(3, 2) == 1.0 && Pv(3, 3) == 0.0);
@@ -282,19 +283,19 @@ static void TestProjection()
     // ближняя -> 0, дальняя -> 1, и обратно через (6.38)
     CHECK(near_(PerspectiveDivide(Pv * V4{ 0.0, 0.0, n, 1.0 })[2], 0.0));
     CHECK(near_(PerspectiveDivide(Pv * V4{ 0.0, 0.0, f, 1.0 })[2], 1.0));
-    CHECK(near_(CameraDepthFromFrustum(ndc[2], n, f), 4.0, 1e-10));
+    CHECK(near_(Frustum::CameraDepthFromFrustum(ndc[2], n, f), 4.0, 1e-10));
 
     // D3D12: y клипа вверх. Точка выше оси (y камеры < 0) уходит в y_ndc > 0.
-    const Matrix4x4 Pd = MakeFrustumProjection(fovY, s, n, f, ClipY::Up);
+    const Matrix4x4 Pd = Frustum::MakeFrustumProjection(fov, s, n, f, ClipY::Up);
     CHECK(near_(Pd(1, 1), -g));
     CHECK(PerspectiveDivide(Pd * V4{ 0.0, -1.0, 4.0, 1.0 })[1] > 0.0);
     CHECK(PerspectiveDivide(Pv * V4{ 0.0, -1.0, 4.0, 1.0 })[1] < 0.0);
 
     // Обратная бесконечная: ближняя -> 1, d = 4 -> n/4, направление -> z_clip = 0 ровно
-    const Matrix4x4 Pr = MakeReversedInfiniteProjection(fovY, s, n, ClipY::Up);
+    const Matrix4x4 Pr = Frustum::MakeReversedInfiniteProjection(fov, s, n, ClipY::Up);
     CHECK(near_(PerspectiveDivide(Pr * V4{ 0.0, 0.0, n, 1.0 })[2], 1.0));
     const double zr = PerspectiveDivide(Pr * V4{ 0.0, 0.0, 4.0, 1.0 })[2];
-    CHECK(near_(zr, n / 4.0) && near_(CameraDepthFromReversedInfinite(zr, n), 4.0));
+    CHECK(near_(zr, n / 4.0) && near_(Frustum::CameraDepthFromReversedInfinite(zr, n), 4.0));
     const V4 dir = Pr * V4{ 0.3, 0.2, 0.9, 0.0 };
     CHECK(dir[2] == 0.0 && dir[3] > 0.0);
     CHECK(IsInsideFrustum(Pr * V4{ 0.5, 0.2, 50.0, 1.0 }, DepthRange::ZeroToOne));
@@ -863,6 +864,7 @@ static void TestFrustum()
     std::printf("[1.7] Frustum: матрица, обратная, плоскости, видимость, эталон Ogre\n");
     using V4 = Vector<4, double>;
     using DM = Frustum::DepthMode;
+    using ClipY = Frustum::ClipY;
     const Radian fov(3.14159265358979323846 / 3.0);
     const double s = 16.0 / 9.0, n = 1.0, f = 100.0, inf = std::numeric_limits<double>::infinity();
     auto near_ = [](double a, double b, double eps = 1e-12) { return std::fabs(a - b) <= eps; };
@@ -880,16 +882,15 @@ static void TestFrustum()
         return F;
     };
 
-    // 1) матрица класса = статическая CreatePerspectiveMatrix = MakeFrustumProjection
+    // 1) матрица класса = статическая MakeFrustumProjection (6.36)
     for (ClipY cy : { ClipY::Down, ClipY::Up }) {
         const Frustum F = make(cy, DM::Standard, f);
-        CHECK(maxDiff(F.GetProjectionMatrix(), Frustum::CreatePerspectiveMatrix(fov, s, n, f, cy)) < 1e-14);
-        CHECK(maxDiff(F.GetProjectionMatrix(), MakeFrustumProjection(fov.ValueRadians(), s, n, f, cy)) < 1e-14);
+        CHECK(maxDiff(F.GetProjectionMatrix(), Frustum::MakeFrustumProjection(fov, s, n, f, cy)) < 1e-14);
         CHECK(maxDiff(F.GetInverseProjectionMatrix(), Frustum::MakeFrustumProjectionInverse(fov, s, n, f, cy)) < 1e-14);
     }
     {
         const Frustum R = make(ClipY::Up, DM::Reversed, inf);
-        CHECK(maxDiff(R.GetProjectionMatrix(), MakeReversedInfiniteProjection(fov.ValueRadians(), s, n, ClipY::Up)) < 1e-14);
+        CHECK(maxDiff(R.GetProjectionMatrix(), Frustum::MakeReversedInfiniteProjection(fov, s, n, ClipY::Up)) < 1e-14);
         CHECK(maxDiff(R.GetInverseProjectionMatrix(), Frustum::MakeReversedInfiniteProjectionInverse(fov, s, n)) < 1e-14);
     }
 
