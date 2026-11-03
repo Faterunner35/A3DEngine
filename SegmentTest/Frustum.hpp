@@ -35,7 +35,6 @@ public:
         Reversed    // near -> 1, far -> 0  (6.45), (6.46): тест GREATER_EQUAL, очистка 0
     };
     enum PlaneId : int32_t { kLeft = 0, kRight, kTop, kBottom, kNear, kFar, kPlaneCount };
-    struct DepthParams { double A, B; };   // перспектива: z_dev = A + B/z; ортография: z_dev = A + B*z
 
     explicit Frustum(ClipY clipY = ClipY::Up, DepthMode depth = DepthMode::Reversed) noexcept
         : mClipY(clipY), mDepthMode(depth) {}
@@ -74,29 +73,21 @@ public:
         return mFrustumPlanes;
     }
 
-    // Строка глубины P для текущего режима.
-    DepthParams GetProjectionParamsAB() const
+    // Глубина камеры z по значению из буфера глубины — для любого режима
+    // (Standard/Reversed, конечная/бесконечная, перспектива/ортография).
+    //   перспектива z_dev = A + B/z  ->  z = B / (z_dev - A)          (6.38) в общем виде
+    //   ортография  z_dev = A + B*z  ->  z = (z_dev - A) / B
+    // Reversed + бесконечная: z_dev = 0 даёт +inf (точка на бесконечности).
+    double CameraDepth(double zDevice) const
     {
-        const bool   stdDepth = mDepthMode == DepthMode::Standard;
-        const double n = mNearDist, f = mFarDist;
-        if (mProjType == ProjectionType::Orthographic) {      // (6.48): линейная глубина
-            const double k = 1.0 / (f - n);
-            return stdDepth ? DepthParams{ -n * k, k } : DepthParams{ f * k, -k };
-        }
-        if (IsInfinite())                                      // (6.42) / (6.46)
-            return stdDepth ? DepthParams{ 1.0 - kInfiniteEps, -n * (1.0 - kInfiniteEps) }
-                            : DepthParams{ 0.0, n };
-        const double k = 1.0 / (f - n);                        // (6.36) / (6.45)
-        return stdDepth ? DepthParams{ f * k, -n * f * k } : DepthParams{ -n * k, n * f * k };
+        const DepthParams dp = GetProjectionParamsAB();
+        return mProjType == ProjectionType::Perspective ? dp.B / (zDevice - dp.A)
+                                                        : (zDevice - dp.A) / dp.B;
     }
 
     // ---- отсечение в пространстве камеры (в мире — через Camera) ----------------
-    bool IsVisible(const Vector<3, double>& p) const
-    {
-        for (const Plane& pl : GetFrustumPlanes()) if (pl.SignedDistance(p) < 0.0) return false;
-        return true;
-    }
-    bool IsVisible(const Vector<3, double>& center, double radius) const   // сфера
+    // Сфера (center, radius) хотя бы частично внутри; radius = 0 — точка.
+    bool IsVisible(const Vector<3, double>& center, double radius = 0.0) const
     {
         for (const Plane& pl : GetFrustumPlanes()) if (pl.SignedDistance(center) < -radius) return false;
         return true;
@@ -148,16 +139,6 @@ public:
                          0.0,   0.0,                  0.0,     1.0,
                          0.0,   0.0,                  1.0 / n, 0.0);
     }
-    // (6.38): глубина камеры по значению буфера для (6.36)
-    static double CameraDepthFromFrustum(double zDevice, double n, double f)
-    {
-        return n * f / ((n - f) * zDevice + f);
-    }
-    // Обращение z_dev = n/z для (6.46). zDevice = 0 — точка на бесконечности.
-    static double CameraDepthFromReversedInfinite(double zDevice, double n)
-    {
-        return n / zDevice;
-    }
 
 private:
     static double FocalG(Radian fovY)                     // g = 1 / tan(fovY/2), вид сбоку
@@ -168,6 +149,23 @@ private:
     static double ClipSignY(ClipY c) { return c == ClipY::Up ? -1.0 : 1.0; }   // D3D12: y клипа вверх
 
     void Invalidate() { mRecalcMatrices = true; mRecalcPlanes = true; }
+
+    // Строка глубины P для текущего режима: перспектива z_dev = A + B/z, ортография z_dev = A + B*z.
+    struct DepthParams { double A, B; };
+    DepthParams GetProjectionParamsAB() const
+    {
+        const bool   stdDepth = mDepthMode == DepthMode::Standard;
+        const double n = mNearDist, f = mFarDist;
+        if (mProjType == ProjectionType::Orthographic) {      // (6.48): линейная глубина
+            const double k = 1.0 / (f - n);
+            return stdDepth ? DepthParams{ -n * k, k } : DepthParams{ f * k, -k };
+        }
+        if (IsInfinite())                                      // (6.42) / (6.46)
+            return stdDepth ? DepthParams{ 1.0 - kInfiniteEps, -n * (1.0 - kInfiniteEps) }
+                            : DepthParams{ 0.0, n };
+        const double k = 1.0 / (f - n);                        // (6.36) / (6.45)
+        return stdDepth ? DepthParams{ f * k, -n * f * k } : DepthParams{ -n * k, n * f * k };
+    }
 
     // Окно кадра, y вниз (top < bottom).
     //   перспектива: окно на расстоянии 1 от камеры, то есть ТАНГЕНСЫ углов до краёв

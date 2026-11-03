@@ -283,7 +283,11 @@ static void TestProjection()
     // ближняя -> 0, дальняя -> 1, и обратно через (6.38)
     CHECK(near_(PerspectiveDivide(Pv * V4{ 0.0, 0.0, n, 1.0 })[2], 0.0));
     CHECK(near_(PerspectiveDivide(Pv * V4{ 0.0, 0.0, f, 1.0 })[2], 1.0));
-    CHECK(near_(Frustum::CameraDepthFromFrustum(ndc[2], n, f), 4.0, 1e-10));
+    {   // обратно в камеру тем же объективом в классе
+        Frustum F(ClipY::Down, Frustum::DepthMode::Standard);
+        F.SetFOVy(fov); F.SetAspectRatio(s); F.SetNearClipDistance(n); F.SetFarClipDistance(f);
+        CHECK(near_(F.CameraDepth(ndc[2]), 4.0, 1e-10));
+    }
 
     // D3D12: y клипа вверх. Точка выше оси (y камеры < 0) уходит в y_ndc > 0.
     const Matrix4x4 Pd = Frustum::MakeFrustumProjection(fov, s, n, f, ClipY::Up);
@@ -295,7 +299,12 @@ static void TestProjection()
     const Matrix4x4 Pr = Frustum::MakeReversedInfiniteProjection(fov, s, n, ClipY::Up);
     CHECK(near_(PerspectiveDivide(Pr * V4{ 0.0, 0.0, n, 1.0 })[2], 1.0));
     const double zr = PerspectiveDivide(Pr * V4{ 0.0, 0.0, 4.0, 1.0 })[2];
-    CHECK(near_(zr, n / 4.0) && near_(Frustum::CameraDepthFromReversedInfinite(zr, n), 4.0));
+    {
+        Frustum R(ClipY::Up, Frustum::DepthMode::Reversed);
+        R.SetFOVy(fov); R.SetAspectRatio(s); R.SetNearClipDistance(n);
+        R.SetFarClipDistance(std::numeric_limits<double>::infinity());
+        CHECK(near_(zr, n / 4.0) && near_(R.CameraDepth(zr), 4.0) && std::isinf(R.CameraDepth(0.0)));
+    }
     const V4 dir = Pr * V4{ 0.3, 0.2, 0.9, 0.0 };
     CHECK(dir[2] == 0.0 && dir[3] > 0.0);
     CHECK(IsInsideFrustum(Pr * V4{ 0.5, 0.2, 50.0, 1.0 }, DepthRange::ZeroToOne));
@@ -901,8 +910,8 @@ static void TestFrustum()
         const Frustum F = make(cy, dm, far_);
         CHECK(isIdentity(F.GetProjectionMatrix() * F.GetInverseProjectionMatrix()));
         const V4 c = F.GetProjectionMatrix() * V4{ 2.0, -1.0, 4.0, 1.0 };
-        const Frustum::DepthParams dp = F.GetProjectionParamsAB();
-        CHECK(near_(c[2] / c[3], dp.A + dp.B / 4.0) && near_(dp.B / (c[2] / c[3] - dp.A), 4.0, 1e-9));
+        CHECK(near_(F.CameraDepth(c[2] / c[3]), 4.0, 1e-9));                // глубина туда-обратно
+        CHECK(near_(F.CameraDepth(dm == DM::Standard ? 0.0 : 1.0), n, 1e-12));   // ближняя плоскость
         CHECK(near_(c[1] / c[3], cy == ClipY::Up ? 0.25 * std::tan(3.14159265358979323846 / 3.0) : -0.25 * std::tan(3.14159265358979323846 / 3.0)));
         CHECK(F.IsVisible(V3{ 0.0, 0.0, 50.0 }) && !F.IsVisible(V3{ 0.0, 0.0, 0.5 }) && !F.IsVisible(V3{ 0.0, 0.0, -5.0 }));
         CHECK(F.IsVisible(V3{ 0.0, 0.0, 0.5 }, 1.0));                     // сфера задевает near
@@ -939,8 +948,10 @@ static void TestFrustum()
         O.SetOrthoWindowHeight(10.0); O.SetAspectRatio(s); O.SetNearClipDistance(n); O.SetFarClipDistance(f);
         CHECK(maxDiff(OgreProjectionRS(oo) * S, O.GetProjectionMatrix()) < 1e-12);
         CHECK(isIdentity(O.GetProjectionMatrix() * O.GetInverseProjectionMatrix()));
-        const Frustum::DepthParams od = O.GetProjectionParamsAB();
-        CHECK(near_((od.A + od.B * 40.0 - od.A) / od.B, 40.0) && near_(od.A + od.B * n, 0.0));
+        {
+            const V4 q = O.GetProjectionMatrix() * V4{ 0.0, 0.0, 40.0, 1.0 };
+            CHECK(near_(O.CameraDepth(q[2] / q[3]), 40.0, 1e-9) && near_(O.CameraDepth(0.0), n));
+        }
 
         // ортография с камерой внутри ящика: n = -5, f = 5 (z = 0 ничем не выделен)
         for (DM dm : { DM::Standard, DM::Reversed }) {
