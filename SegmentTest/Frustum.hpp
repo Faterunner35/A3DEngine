@@ -169,14 +169,17 @@ private:
 
     void Invalidate() { mRecalcMatrices = true; mRecalcPlanes = true; }
 
-    // Окно на ближней плоскости (перспектива) или ящик по x, y (ортография). y вниз: top < bottom.
+    // Окно кадра, y вниз (top < bottom).
+    //   перспектива: окно на расстоянии 1 от камеры, то есть ТАНГЕНСЫ углов до краёв
+    //                (не зависит от n). Симметричное окно: halfH = 1/g, halfW = s/g.
+    //   ортография:  ящик по x, y в единицах камеры.
     void CalcProjectionParameters(double& left, double& right, double& top, double& bottom) const
     {
         if (mProjType == ProjectionType::Perspective) {
-            const double halfH = mathx::Tan(mFovy * 0.5) * mNearDist;
-            const double halfW = halfH * mAspect;
-            const double nearFocal = mNearDist / mFocalLength;   // сдвиг задан в фокальной плоскости
-            const double offX = mFrustumOffset[0] * nearFocal, offY = mFrustumOffset[1] * nearFocal;
+            const double halfH = mathx::Tan(mFovy * 0.5);           // 1/g
+            const double halfW = halfH * mAspect;                    // s/g
+            // сдвиг задан в фокальной плоскости z = focal; на расстоянии 1 он в focal раз меньше
+            const double offX = mFrustumOffset[0] / mFocalLength, offY = mFrustumOffset[1] / mFocalLength;
             left = -halfW + offX;  right  = halfW + offX;
             top  = -halfH + offY;  bottom = halfH + offY;
         } else {
@@ -200,13 +203,13 @@ private:
         const DepthParams dp = GetProjectionParamsAB();
         const double sy = ClipSignY(mClipY);
 
-        // Общее для обоих типов: перспектива масштабирует окно на ближней плоскости
-        // (множитель n, сдвиг уходит в столбец z), ортография — ящик (множитель 1,
-        // сдвиг в столбец w).
-        const double scale = persp ? mNearDist : 1.0;
+        // Окно [l,r] x [t,b] -> [-1,1] x [-1,1]: одни и те же масштаб и сдвиг для обоих типов.
+        // Перспектива: окно в тангенсах, x/z в [l,r]; симметричное -> a = g/s, by = ±g, c = dy = 0
+        // (это (6.36)); сдвиг c, dy стоит в столбце z, потому что умножается на z, а потом /w = z.
+        // Ортография: ящик (6.48); сдвиг стоит в столбце w = 1.
         const double iw = 1.0 / (r - l), ih = 1.0 / (b - t);
-        const double a  = 2.0 * scale * iw,      c  = -(r + l) * iw;
-        const double by = sy * 2.0 * scale * ih, dy = -sy * (b + t) * ih;
+        const double a  = 2.0 * iw,      c  = -(r + l) * iw;
+        const double by = sy * 2.0 * ih, dy = -sy * (b + t) * ih;
 
         if (persp) {
             mProjMatrix    = Matrix4x4(a,   0.0, c,    0.0,
