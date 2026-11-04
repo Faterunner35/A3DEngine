@@ -9,8 +9,6 @@
 #include <cstdint>
 #include <limits>
 
-namespace mathx {
-
 // ============================================================================
 //  Пирамида видимости — «объектив» камеры. Живёт только в пространстве камеры
 //  FGED (Lengyel, т. 2, гл. 6): x вправо, y ВНИЗ, z ВПЕРЁД (правая тройка).
@@ -48,7 +46,7 @@ public:
     void SetNearClipDistance(double n)                { mNearDist = n; Invalidate(); }
     void SetFarClipDistance(double f)                 { mFarDist = f; Invalidate(); }   // +inf — бесконечная
     void SetOrthoWindowHeight(double h)               { assert(h > 0.0); mOrthoHeight = h; Invalidate(); }
-    void SetFrustumOffset(const Vector<2, double>& o) { mFrustumOffset = o; Invalidate(); }   // стерео, y вниз
+    void SetFrustumOffset(const mathx::Vector<2, double>& o) { mFrustumOffset = o; Invalidate(); }   // стерео, y вниз
     void SetFocalLength(double focal)                 { assert(focal > 0.0); mFocalLength = focal; Invalidate(); }
     void SetProjectionType(ProjectionType t)          { mProjType = t; Invalidate(); }
     void SetClipY(ClipY c)                            { mClipY = c; Invalidate(); }
@@ -65,9 +63,9 @@ public:
     bool           IsInfinite() const          { return std::isinf(mFarDist); }
 
     // ---- результаты: геттер досчитывает только устаревшее ----------------------
-    const Matrix4x4& GetProjectionMatrix() const        { UpdateMatrices(); return mProjMatrix; }
-    const Matrix4x4& GetInverseProjectionMatrix() const { UpdateMatrices(); return mInvProjMatrix; }
-    const std::array<Plane, kPlaneCount>& GetFrustumPlanes() const   // нормали внутрь
+    const mathx::Matrix4x4& GetProjectionMatrix() const        { UpdateMatrices(); return mProjMatrix; }
+    const mathx::Matrix4x4& GetInverseProjectionMatrix() const { UpdateMatrices(); return mInvProjMatrix; }
+    const std::array<mathx::Plane, kPlaneCount>& GetFrustumPlanes() const   // нормали внутрь
     {
         UpdateMatrices();
         if (mRecalcPlanes) UpdatePlanes();
@@ -88,31 +86,31 @@ public:
 
     // ---- отсечение в пространстве камеры (в мире — через Camera) ----------------
     // Сфера (center, radius) хотя бы частично внутри; radius = 0 — точка.
-    bool IsVisible(const Vector<3, double>& center, double radius = 0.0) const
+    bool IsVisible(const mathx::Vector<3, double>& center, double radius = 0.0) const
     {
-        for (const Plane& pl : GetFrustumPlanes()) if (pl.SignedDistance(center) < -radius) return false;
+        for (const mathx::Plane& pl : GetFrustumPlanes()) if (pl.SignedDistance(center) < -radius) return false;
         return true;
     }
 
     // ---- готовые матрицы без объекта (листинги FGED): симметричная пирамида ------
     // (6.36), листинг 6.1: near -> 0, far -> 1.   z_dev = A + B/z,  A = f/(f-n),  B = -nf/(f-n)
-    static Matrix4x4 MakeFrustumProjection(Radian fovY, double s, double n, double f,
+    static mathx::Matrix4x4 MakeFrustumProjection(Radian fovY, double s, double n, double f,
                                            ClipY clipY = ClipY::Up)
     {
         assert(s > 0.0 && n > 0.0 && f > n && "MakeFrustumProjection: нужны s > 0, 0 < n < f");
         const double g = FocalG(fovY), k = f / (f - n);
-        return Matrix4x4(g / s, 0.0,              0.0, 0.0,
+        return mathx::Matrix4x4(g / s, 0.0,              0.0, 0.0,
                          0.0,   ClipSignY(clipY) * g, 0.0, 0.0,
                          0.0,   0.0,              k,   -n * k,
                          0.0,   0.0,              1.0, 0.0);   // w = z
     }
     // (6.37): обратная к (6.36)
-    static Matrix4x4 MakeFrustumProjectionInverse(Radian fovY, double s, double n, double f,
+    static mathx::Matrix4x4 MakeFrustumProjectionInverse(Radian fovY, double s, double n, double f,
                                                   ClipY clipY = ClipY::Up)
     {
         assert(s > 0.0 && n > 0.0 && f > n);
         const double g = FocalG(fovY);
-        return Matrix4x4(s / g, 0.0,                        0.0,               0.0,
+        return mathx::Matrix4x4(s / g, 0.0,                        0.0,               0.0,
                          0.0,   ClipSignY(clipY) / g,       0.0,               0.0,
                          0.0,   0.0,                        0.0,               1.0,
                          0.0,   0.0,                        (n - f) / (n * f), 1.0 / n);
@@ -120,22 +118,22 @@ public:
     // (6.46): обратная бесконечная, near -> 1, бесконечность -> 0.  z_dev = n/z.
     // Для направления (w = 0) строка (0,0,0,n) даёт z_clip = 0 ровно — epsilon не нужен
     // при тесте GREATER_EQUAL и очистке 0. Формат D32_FLOAT.
-    static Matrix4x4 MakeReversedInfiniteProjection(Radian fovY, double s, double n,
+    static mathx::Matrix4x4 MakeReversedInfiniteProjection(Radian fovY, double s, double n,
                                                     ClipY clipY = ClipY::Up)
     {
         assert(s > 0.0 && n > 0.0 && "MakeReversedInfiniteProjection: нужны s > 0, n > 0");
         const double g = FocalG(fovY);
-        return Matrix4x4(g / s, 0.0,              0.0, 0.0,
+        return mathx::Matrix4x4(g / s, 0.0,              0.0, 0.0,
                          0.0,   ClipSignY(clipY) * g, 0.0, 0.0,
                          0.0,   0.0,              0.0, n,
                          0.0,   0.0,              1.0, 0.0);
     }
-    static Matrix4x4 MakeReversedInfiniteProjectionInverse(Radian fovY, double s, double n,
+    static mathx::Matrix4x4 MakeReversedInfiniteProjectionInverse(Radian fovY, double s, double n,
                                                            ClipY clipY = ClipY::Up)
     {
         assert(s > 0.0 && n > 0.0);
         const double g = FocalG(fovY);
-        return Matrix4x4(s / g, 0.0,                  0.0,     0.0,
+        return mathx::Matrix4x4(s / g, 0.0,                  0.0,     0.0,
                          0.0,   ClipSignY(clipY) / g, 0.0,     0.0,
                          0.0,   0.0,                  0.0,     1.0,
                          0.0,   0.0,                  1.0 / n, 0.0);
@@ -145,7 +143,7 @@ private:
     static double FocalG(Radian fovY)                     // g = 1 / tan(fovY/2), вид сбоку
     {
         assert(fovY.ValueRadians() > 0.0 && fovY.ValueRadians() < kPi);
-        return 1.0 / Tan(fovY * 0.5);
+        return 1.0 / mathx::Tan(fovY * 0.5);
     }
     static double ClipSignY(ClipY c) { return c == ClipY::Up ? -1.0 : 1.0; }   // D3D12: y клипа вверх
 
@@ -175,7 +173,7 @@ private:
     void CalcProjectionParameters(double& left, double& right, double& top, double& bottom) const
     {
         if (mProjType == ProjectionType::Perspective) {
-            const double halfH = Tan(mFovy * 0.5);           // 1/g
+            const double halfH = mathx::Tan(mFovy * 0.5);           // 1/g
             const double halfW = halfH * mAspect;                    // s/g
             // сдвиг задан в фокальной плоскости z = focal; на расстоянии 1 он в focal раз меньше
             const double offX = mFrustumOffset[0] / mFocalLength, offY = mFrustumOffset[1] / mFocalLength;
@@ -211,20 +209,20 @@ private:
         const double by = sy * 2.0 * ih, dy = -sy * (b + t) * ih;
 
         if (persp) {
-            mProjMatrix    = Matrix4x4(a,   0.0, c,    0.0,
+            mProjMatrix    = mathx::Matrix4x4(a,   0.0, c,    0.0,
                                        0.0, by,  dy,   0.0,
                                        0.0, 0.0, dp.A, dp.B,
                                        0.0, 0.0, 1.0,  0.0);           // w = z
-            mInvProjMatrix = Matrix4x4(1.0 / a, 0.0,      0.0,        -c / a,
+            mInvProjMatrix = mathx::Matrix4x4(1.0 / a, 0.0,      0.0,        -c / a,
                                        0.0,     1.0 / by, 0.0,        -dy / by,
                                        0.0,     0.0,      0.0,        1.0,
                                        0.0,     0.0,      1.0 / dp.B, -dp.A / dp.B);
         } else {
-            mProjMatrix    = Matrix4x4(a,   0.0, 0.0,  c,
+            mProjMatrix    = mathx::Matrix4x4(a,   0.0, 0.0,  c,
                                        0.0, by,  0.0,  dy,
                                        0.0, 0.0, dp.B, dp.A,
                                        0.0, 0.0, 0.0,  1.0);           // w = 1
-            mInvProjMatrix = Matrix4x4(1.0 / a, 0.0,      0.0,        -c / a,
+            mInvProjMatrix = mathx::Matrix4x4(1.0 / a, 0.0,      0.0,        -c / a,
                                        0.0,     1.0 / by, 0.0,        -dy / by,
                                        0.0,     0.0,      1.0 / dp.B, -dp.A / dp.B,
                                        0.0,     0.0,      0.0,        1.0);
@@ -236,8 +234,8 @@ private:
     // Плоскости из строк P (Грибб–Хартманн), в пространстве камеры, нормали внутрь.
     void UpdatePlanes() const
     {
-        using V4 = Vector<4, double>;
-        const Matrix4x4& P = mProjMatrix;
+        using V4 = mathx::Vector<4, double>;
+        const mathx::Matrix4x4& P = mProjMatrix;
         const double sy = ClipSignY(mClipY);   // приводим строку y к «клип вниз»
         const V4 r0{ P(0, 0), P(0, 1), P(0, 2), P(0, 3) };
         const V4 rY{ sy * P(1, 0), sy * P(1, 1), sy * P(1, 2), sy * P(1, 3) };
@@ -248,7 +246,7 @@ private:
         };
         auto plane = [](const V4& v) {
             const double inv = 1.0 / std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-            return Plane(Vector<3, double>{ v[0] * inv, v[1] * inv, v[2] * inv }, v[3] * inv);
+            return mathx::Plane(mathx::Vector<3, double>{ v[0] * inv, v[1] * inv, v[2] * inv }, v[3] * inv);
         };
         mFrustumPlanes[kLeft]   = plane(comb(r3, r0, +1.0));   // x >= -w
         mFrustumPlanes[kRight]  = plane(comb(r3, r0, -1.0));   // x <=  w
@@ -258,7 +256,7 @@ private:
         const V4 zLow = r2, zHigh = comb(r3, r2, -1.0);       // z >= 0,  z <= w
         mFrustumPlanes[kNear] = plane(stdDepth ? zLow : zHigh);
         mFrustumPlanes[kFar]  = IsInfinite()
-            ? Plane(Vector<3, double>{ 0.0, 0.0, -1.0 }, std::numeric_limits<double>::infinity())
+            ? mathx::Plane(mathx::Vector<3, double>{ 0.0, 0.0, -1.0 }, std::numeric_limits<double>::infinity())
             : plane(stdDepth ? zHigh : zLow);
         mRecalcPlanes = false;
     }
@@ -273,16 +271,15 @@ private:
     double             mNearDist = 0.1;
     double             mAspect = 16.0 / 9.0;
     double             mOrthoHeight = 1000.0;
-    Vector<2, double>  mFrustumOffset{ 0.0, 0.0 };   // в фокальной плоскости, y вниз
+    mathx::Vector<2, double>  mFrustumOffset{ 0.0, 0.0 };   // в фокальной плоскости, y вниз
     double             mFocalLength = 1.0;
     ClipY              mClipY;
     DepthMode          mDepthMode;
 
-    mutable Matrix4x4  mProjMatrix;
-    mutable Matrix4x4  mInvProjMatrix;
-    mutable std::array<Plane, kPlaneCount> mFrustumPlanes;
+    mutable mathx::Matrix4x4  mProjMatrix;
+    mutable mathx::Matrix4x4  mInvProjMatrix;
+    mutable std::array<mathx::Plane, kPlaneCount> mFrustumPlanes;
     mutable bool       mRecalcMatrices = true;
     mutable bool       mRecalcPlanes = true;
 };
 
-} // namespace mathx
