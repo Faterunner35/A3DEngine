@@ -1,7 +1,8 @@
 #pragma once
-#include "Math.h"          // Radian, mathx::Tan, ::detail::PI
+#include "Geomerty.h"      // Vector
+#include "Math.h"          // Radian, Tan
 #include "Matrxi4x4.hpp"   // Matrix4x4
-#include "Plane.h"
+#include "Plane.h"         // Plane
 #include <array>
 #include <cassert>
 #include <cmath>
@@ -34,7 +35,7 @@ public:
         Standard,   // near -> 0, far -> 1                     (6.36), тест LESS
         Reversed    // near -> 1, far -> 0  (6.45), (6.46): тест GREATER_EQUAL, очистка 0
     };
-    enum PlaneId : int32_t { kLeft = 0, kRight, kTop, kBottom, kNear, kFar, kPlaneCount };
+    enum PlaneId : std::int32_t { kLeft = 0, kRight, kTop, kBottom, kNear, kFar, kPlaneCount };
 
     explicit Frustum(ClipY clipY = ClipY::Up, DepthMode depth = DepthMode::Reversed) noexcept
         : mClipY(clipY), mDepthMode(depth) {}
@@ -143,8 +144,8 @@ public:
 private:
     static double FocalG(Radian fovY)                     // g = 1 / tan(fovY/2), вид сбоку
     {
-        assert(fovY.ValueRadians() > 0.0 && fovY.ValueRadians() < ::detail::PI);
-        return 1.0 / mathx::Tan(fovY * 0.5);
+        assert(fovY.ValueRadians() > 0.0 && fovY.ValueRadians() < kPi);
+        return 1.0 / Tan(fovY * 0.5);
     }
     static double ClipSignY(ClipY c) { return c == ClipY::Up ? -1.0 : 1.0; }   // D3D12: y клипа вверх
 
@@ -174,7 +175,7 @@ private:
     void CalcProjectionParameters(double& left, double& right, double& top, double& bottom) const
     {
         if (mProjType == ProjectionType::Perspective) {
-            const double halfH = mathx::Tan(mFovy * 0.5);           // 1/g
+            const double halfH = Tan(mFovy * 0.5);           // 1/g
             const double halfW = halfH * mAspect;                    // s/g
             // сдвиг задан в фокальной плоскости z = focal; на расстоянии 1 он в focal раз меньше
             const double offX = mFrustumOffset[0] / mFocalLength, offY = mFrustumOffset[1] / mFocalLength;
@@ -264,9 +265,10 @@ private:
 
     // ---- поля -------------------------------------------------------------------
     static constexpr double kInfiniteEps = 9.5367431640625e-07;   // 2^-20, Lengyel (6.42)
+    static constexpr double kPi = 3.14159265358979323846;
 
     ProjectionType     mProjType = ProjectionType::Perspective;
-    Radian             mFovy{ ::detail::PI / 3.0 };
+    Radian             mFovy{ kPi / 3.0 };
     double             mFarDist = 100000.0;
     double             mNearDist = 0.1;
     double             mAspect = 16.0 / 9.0;
