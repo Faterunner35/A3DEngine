@@ -27,7 +27,7 @@
 //  Запуск:  build/engine_tests   (Windows: build\Release\engine_tests.exe)
 // =============================================================================
 #include "TranformManager.hpp"
-#include "Projection.hpp"
+#include "Frustum.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -266,9 +266,11 @@ static void TestProjection()
     const double g = 1.0 / std::tan(fovY * 0.5);                       // 1.7320508
     auto near_ = [](double a, double b, double eps = 1e-12) { return std::fabs(a - b) <= eps; };
     using V4 = Vector<4, double>;
+    using ClipY = Frustum::ClipY;
+    const Radian fov(fovY);
 
     // (6.36) как в листинге 6.1 (y клипа вниз, Vulkan): элементы матрицы
-    const Matrix4x4 Pv = MakeFrustumProjection(fovY, s, n, f, ClipY::Down);
+    const Matrix4x4 Pv = Frustum::MakeFrustumProjection(fov, s, n, f, ClipY::Down);
     CHECK(near_(Pv(0, 0), g / s) && near_(Pv(1, 1), g));
     CHECK(near_(Pv(2, 2), f / (f - n)) && near_(Pv(2, 3), -n * f / (f - n)));
     CHECK(Pv(3, 2) == 1.0 && Pv(3, 3) == 0.0);
@@ -281,19 +283,28 @@ static void TestProjection()
     // ближняя -> 0, дальняя -> 1, и обратно через (6.38)
     CHECK(near_(PerspectiveDivide(Pv * V4{ 0.0, 0.0, n, 1.0 })[2], 0.0));
     CHECK(near_(PerspectiveDivide(Pv * V4{ 0.0, 0.0, f, 1.0 })[2], 1.0));
-    CHECK(near_(CameraDepthFromFrustum(ndc[2], n, f), 4.0, 1e-10));
+    {   // обратно в камеру тем же объективом в классе
+        Frustum F(ClipY::Down, Frustum::DepthMode::Standard);
+        F.SetFOVy(fov); F.SetAspectRatio(s); F.SetNearClipDistance(n); F.SetFarClipDistance(f);
+        CHECK(near_(F.CameraDepth(ndc[2]), 4.0, 1e-10));
+    }
 
     // D3D12: y клипа вверх. Точка выше оси (y камеры < 0) уходит в y_ndc > 0.
-    const Matrix4x4 Pd = MakeFrustumProjection(fovY, s, n, f, ClipY::Up);
+    const Matrix4x4 Pd = Frustum::MakeFrustumProjection(fov, s, n, f, ClipY::Up);
     CHECK(near_(Pd(1, 1), -g));
     CHECK(PerspectiveDivide(Pd * V4{ 0.0, -1.0, 4.0, 1.0 })[1] > 0.0);
     CHECK(PerspectiveDivide(Pv * V4{ 0.0, -1.0, 4.0, 1.0 })[1] < 0.0);
 
     // Обратная бесконечная: ближняя -> 1, d = 4 -> n/4, направление -> z_clip = 0 ровно
-    const Matrix4x4 Pr = MakeReversedInfiniteProjection(fovY, s, n, ClipY::Up);
+    const Matrix4x4 Pr = Frustum::MakeReversedInfiniteProjection(fov, s, n, ClipY::Up);
     CHECK(near_(PerspectiveDivide(Pr * V4{ 0.0, 0.0, n, 1.0 })[2], 1.0));
     const double zr = PerspectiveDivide(Pr * V4{ 0.0, 0.0, 4.0, 1.0 })[2];
-    CHECK(near_(zr, n / 4.0) && near_(CameraDepthFromReversedInfinite(zr, n), 4.0));
+    {
+        Frustum R(ClipY::Up, Frustum::DepthMode::Reversed);
+        R.SetFOVy(fov); R.SetAspectRatio(s); R.SetNearClipDistance(n);
+        R.SetFarClipDistance(std::numeric_limits<double>::infinity());
+        CHECK(near_(zr, n / 4.0) && near_(R.CameraDepth(zr), 4.0) && std::isinf(R.CameraDepth(0.0)));
+    }
     const V4 dir = Pr * V4{ 0.3, 0.2, 0.9, 0.0 };
     CHECK(dir[2] == 0.0 && dir[3] > 0.0);
     CHECK(IsInsideFrustum(Pr * V4{ 0.5, 0.2, 50.0, 1.0 }, DepthRange::ZeroToOne));
@@ -821,6 +832,144 @@ static void StressOperationCosts(uint32_t n)
     std::printf("    Update после GC                           %8.2f мс   (перестройка + сироты стали корнями)\n", tAfter);
 }
 
+// Эталон Ogre: calcProjectionParameters + updateFrustumImpl (камера Ogre: y вверх,
+// смотрит в -z, глубина [-1,1]) и перевод в [0,1] рендер-системой: row2 = (row2+row3)/2.
+struct OgreRef {
+    double fovY = 0, aspect = 1, n = 1, f = 100;
+    double offX = 0, offY = 0, focal = 1;          // offY — вверх, как у Ogre
+    bool ortho = false; double orthoH = 1;
+};
+static Matrix4x4 OgreProjectionRS(const OgreRef& o)
+{
+    double left, right, bottom, top;
+    if (!o.ortho) {
+        const double tanY = std::tan(o.fovY * 0.5), tanX = tanY * o.aspect;
+        const double nearFocal = o.n / o.focal, hw = tanX * o.n, hh = tanY * o.n;
+        left = -hw + o.offX * nearFocal; right = hw + o.offX * nearFocal;
+        bottom = -hh + o.offY * nearFocal; top = hh + o.offY * nearFocal;
+    } else {
+        const double hh = o.orthoH * 0.5, hw = hh * o.aspect;
+        left = -hw; right = hw; bottom = -hh; top = hh;
+    }
+    const double iw = 1 / (right - left), ih = 1 / (top - bottom), id = 1 / (o.f - o.n);
+    Matrix4x4 P; for (int i = 0; i < 16; ++i) P[i] = 0;
+    if (!o.ortho) {
+        P(0, 0) = 2 * o.n * iw; P(0, 2) = (right + left) * iw;
+        P(1, 1) = 2 * o.n * ih; P(1, 2) = (top + bottom) * ih;
+        P(2, 2) = -(o.f + o.n) * id; P(2, 3) = -2 * (o.f * o.n) * id; P(3, 2) = -1;
+    } else {
+        P(0, 0) = 2 * iw; P(0, 3) = -(right + left) * iw;
+        P(1, 1) = 2 * ih; P(1, 3) = -(top + bottom) * ih;
+        P(2, 2) = -2 * id; P(2, 3) = -(o.f + o.n) * id; P(3, 3) = 1;
+    }
+    for (int k = 0; k < 4; ++k) P(2, k) = (P(2, k) + P(3, k)) * 0.5;
+    return P;
+}
+
+// [1.7] Frustum: статические функции, матрица из окна, обратная, глубина,
+// плоскости FGED, видимость, стерео, ортография, эталон Ogre.
+static void TestFrustum()
+{
+    std::printf("[1.7] Frustum: матрица, обратная, плоскости, видимость, эталон Ogre\n");
+    using V4 = Vector<4, double>;
+    using DM = Frustum::DepthMode;
+    using ClipY = Frustum::ClipY;
+    const Radian fov(3.14159265358979323846 / 3.0);
+    const double s = 16.0 / 9.0, n = 1.0, f = 100.0, inf = std::numeric_limits<double>::infinity();
+    auto near_ = [](double a, double b, double eps = 1e-12) { return std::fabs(a - b) <= eps; };
+    auto maxDiff = [](const Matrix4x4& A, const Matrix4x4& B) {
+        double m = 0; for (int i = 0; i < 16; ++i) m = std::fmax(m, std::fabs(A[i] - B[i])); return m;
+    };
+    auto isIdentity = [](const Matrix4x4& M) {
+        for (int i = 0; i < 4; ++i) for (int j = 0; j < 4; ++j)
+            if (std::fabs(M(i, j) - (i == j ? 1.0 : 0.0)) > 1e-11) return false;
+        return true;
+    };
+    auto make = [&](ClipY cy, DM dm, double far_) {
+        Frustum F(cy, dm);
+        F.SetFOVy(fov); F.SetAspectRatio(s); F.SetNearClipDistance(n); F.SetFarClipDistance(far_);
+        return F;
+    };
+
+    // 1) матрица класса = статическая MakeFrustumProjection (6.36)
+    for (ClipY cy : { ClipY::Down, ClipY::Up }) {
+        const Frustum F = make(cy, DM::Standard, f);
+        CHECK(maxDiff(F.GetProjectionMatrix(), Frustum::MakeFrustumProjection(fov, s, n, f, cy)) < 1e-14);
+        CHECK(maxDiff(F.GetInverseProjectionMatrix(), Frustum::MakeFrustumProjectionInverse(fov, s, n, f, cy)) < 1e-14);
+    }
+    {
+        const Frustum R = make(ClipY::Up, DM::Reversed, inf);
+        CHECK(maxDiff(R.GetProjectionMatrix(), Frustum::MakeReversedInfiniteProjection(fov, s, n, ClipY::Up)) < 1e-14);
+        CHECK(maxDiff(R.GetInverseProjectionMatrix(), Frustum::MakeReversedInfiniteProjectionInverse(fov, s, n)) < 1e-14);
+    }
+
+    // 2) все соглашения: обратная, глубина туда-обратно, видимость
+    for (ClipY cy : { ClipY::Down, ClipY::Up })
+    for (DM dm : { DM::Standard, DM::Reversed })
+    for (double far_ : { f, inf }) {
+        const Frustum F = make(cy, dm, far_);
+        CHECK(isIdentity(F.GetProjectionMatrix() * F.GetInverseProjectionMatrix()));
+        const V4 c = F.GetProjectionMatrix() * V4{ 2.0, -1.0, 4.0, 1.0 };
+        CHECK(near_(F.CameraDepth(c[2] / c[3]), 4.0, 1e-9));                // глубина туда-обратно
+        CHECK(near_(F.CameraDepth(dm == DM::Standard ? 0.0 : 1.0), n, 1e-12));   // ближняя плоскость
+        CHECK(near_(c[1] / c[3], cy == ClipY::Up ? 0.25 * std::tan(3.14159265358979323846 / 3.0) : -0.25 * std::tan(3.14159265358979323846 / 3.0)));
+        CHECK(F.IsVisible(V3{ 0.0, 0.0, 50.0 }) && !F.IsVisible(V3{ 0.0, 0.0, 0.5 }) && !F.IsVisible(V3{ 0.0, 0.0, -5.0 }));
+        CHECK(F.IsVisible(V3{ 0.0, 0.0, 0.5 }, 1.0));                     // сфера задевает near
+        CHECK(F.IsVisible(V3{ 0.0, 0.0, 200.0 }) == std::isinf(far_));
+    }
+
+    // 3) плоскости = таблица 6.1 FGED
+    {
+        const Frustum F = make(ClipY::Up, DM::Reversed, f);
+        const auto& pl = F.GetFrustumPlanes();
+        const double g = 1.0 / std::tan(fov.ValueRadians() * 0.5), L = std::sqrt(g * g + s * s), T = std::sqrt(g * g + 1.0);
+        CHECK(near_(pl[Frustum::kLeft].GetNormal()[0], g / L) && near_(pl[Frustum::kLeft].GetNormal()[2], s / L));
+        CHECK(near_(pl[Frustum::kTop].GetNormal()[1], g / T) && near_(pl[Frustum::kTop].GetNormal()[2], 1.0 / T));
+        CHECK(near_(pl[Frustum::kNear].GetDistance(), -n) && near_(pl[Frustum::kFar].GetDistance(), f));
+    }
+
+    // 4) эталон Ogre: P_ogre_RS * diag(1,-1,-1,1) = наша (ClipY::Up, Standard)
+    Matrix4x4 S; for (int i = 0; i < 16; ++i) S[i] = 0;
+    S(0, 0) = 1; S(1, 1) = -1; S(2, 2) = -1; S(3, 3) = 1;
+    {
+        OgreRef o; o.fovY = fov.ValueRadians(); o.aspect = s; o.n = n; o.f = f;
+        Frustum F = make(ClipY::Up, DM::Standard, f);
+        CHECK(maxDiff(OgreProjectionRS(o) * S, F.GetProjectionMatrix()) < 1e-12);
+        o.offX = -0.032; o.offY = 0.05; o.focal = 2.0;                    // стерео
+        F.SetFrustumOffset(Vector<2, double>{ -0.032, -0.05 }); F.SetFocalLength(2.0);   // y вниз
+        CHECK(maxDiff(OgreProjectionRS(o) * S, F.GetProjectionMatrix()) < 1e-12);
+        const V4 q = F.GetProjectionMatrix() * V4{ -0.032, -0.05, 2.0, 1.0 };   // центр окна на фокусе
+        CHECK(near_(q[0] / q[3], 0.0) && near_(q[1] / q[3], 0.0));
+        CHECK(isIdentity(F.GetProjectionMatrix() * F.GetInverseProjectionMatrix()));
+
+        OgreRef oo; oo.ortho = true; oo.orthoH = 10.0; oo.aspect = s; oo.n = n; oo.f = f;   // ортография
+        Frustum O(ClipY::Up, DM::Standard);
+        O.SetProjectionType(Frustum::ProjectionType::Orthographic);
+        O.SetOrthoWindowHeight(10.0); O.SetAspectRatio(s); O.SetNearClipDistance(n); O.SetFarClipDistance(f);
+        CHECK(maxDiff(OgreProjectionRS(oo) * S, O.GetProjectionMatrix()) < 1e-12);
+        CHECK(isIdentity(O.GetProjectionMatrix() * O.GetInverseProjectionMatrix()));
+        {
+            const V4 q = O.GetProjectionMatrix() * V4{ 0.0, 0.0, 40.0, 1.0 };
+            CHECK(near_(O.CameraDepth(q[2] / q[3]), 40.0, 1e-9) && near_(O.CameraDepth(0.0), n));
+        }
+
+        // ортография с камерой внутри ящика: n = -5, f = 5 (z = 0 ничем не выделен)
+        for (DM dm : { DM::Standard, DM::Reversed }) {
+            Frustum B(ClipY::Up, dm);
+            B.SetProjectionType(Frustum::ProjectionType::Orthographic);
+            B.SetOrthoWindowHeight(10.0); B.SetAspectRatio(1.0);
+            B.SetNearClipDistance(-5.0); B.SetFarClipDistance(5.0);
+            const bool st = dm == DM::Standard;
+            auto depth = [&](double z) { const V4 c = B.GetProjectionMatrix() * V4{ 0.0, 0.0, z, 1.0 }; return c[2] / c[3]; };
+            CHECK(near_(depth(-5.0), st ? 0.0 : 1.0) && near_(depth(5.0), st ? 1.0 : 0.0) && near_(depth(0.0), 0.5));
+            CHECK(isIdentity(B.GetProjectionMatrix() * B.GetInverseProjectionMatrix()));
+            CHECK(B.IsVisible(V3{ 0.0, 0.0, -3.0 }) && B.IsVisible(V3{ 0.0, 0.0, 0.0 }));   // за камерой и в ней
+            CHECK(!B.IsVisible(V3{ 0.0, 0.0, -6.0 }) && !B.IsVisible(V3{ 0.0, 0.0, 6.0 }));
+            CHECK(near_(B.GetFrustumPlanes()[Frustum::kNear].GetDistance(), 5.0));     // z >= -5
+        }
+    }
+}
+
 int main(int argc, char** argv)
 {
 #ifdef _WIN32
@@ -839,6 +988,7 @@ int main(int argc, char** argv)
     TestParentDestroyAndGC();
     TestMatrix3x3Indexing();
     TestProjection();
+    TestFrustum();
     std::printf("  проверок: %d, провалено: %d\n\n", g_checks, g_failed);
     if (mode == "--tests-only") return g_failed ? 1 : 0;
 
