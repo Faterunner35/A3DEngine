@@ -10,9 +10,10 @@
 #include <limits>
 
 // ============================================================================
-//  Пирамида видимости — «объектив» камеры. Живёт только в пространстве камеры
+//  Пирамида видимости — «объектив» камеры. Живёт в пространстве камеры
 //  FGED (Lengyel, т. 2, гл. 6): x вправо, y ВНИЗ, z ВПЕРЁД (правая тройка).
 //  Положение камеры в мире и матрица вида V — в классе Camera.
+//  Плоскости в мире / объекте — из P·V / P·V·M (ExtractPlanes, FGED §6.3.5).
 //
 //  Клип: -w <= x, y <= w,  0 <= z <= w  (глубина [0,1], D3D12 / Vulkan).
 //  Матрицы хранятся по строкам, точка — столбец: p_clip = P * p_camera.
@@ -65,11 +66,17 @@ public:
     // ---- результаты: геттер досчитывает только устаревшее ----------------------
     const mathx::Matrix4x4& GetProjectionMatrix() const        { UpdateMatrices(); return mProjMatrix; }
     const mathx::Matrix4x4& GetInverseProjectionMatrix() const { UpdateMatrices(); return mInvProjMatrix; }
-    const std::array<mathx::Plane, kPlaneCount>& GetFrustumPlanes() const   // нормали внутрь
+    const std::array<mathx::Plane, kPlaneCount>& GetFrustumPlanes() const   // камера, нормали внутрь
     {
         UpdateMatrices();
         if (mRecalcPlanes) UpdatePlanes();
         return mFrustumPlanes;
+    }
+    // Плоскости в пространстве X, где toCamera: X -> камера (аффинная):
+    //   toCamera = V -> мир,  V·M -> объект.  Не кэшируются.
+    std::array<mathx::Plane, kPlaneCount> GetFrustumPlanes(const mathx::Matrix4x4& toCamera) const
+    {
+        return ExtractPlanes(GetProjectionMatrix() * toCamera, mClipY, mDepthMode, IsInfinite());
     }
 
     // Глубина камеры z по значению из буфера глубины — для любого режима
@@ -84,12 +91,61 @@ public:
                                                         : (zDevice - dp.A) / dp.B;
     }
 
-    // ---- отсечение в пространстве камеры (в мире — через Camera) ----------------
+    // ---- отсечение ----------------------------------------------------------------
     // Сфера (center, radius) хотя бы частично внутри; radius = 0 — точка.
+    // center — в том же пространстве, что и плоскости. Плоскости нормированы:
+    // для мира/объекта это верно и при V, M с масштабом (нормировка — после A).
+    static bool IsSphereVisible(const std::array<mathx::Plane, kPlaneCount>& planes,
+                                const mathx::Vector<3, double>& center, double radius = 0.0)
+    {
+        for (const mathx::Plane& pl : planes) if (pl.SignedDistance(center) < -radius) return false;
+        return true;
+    }
+    // В пространстве камеры.
     bool IsVisible(const mathx::Vector<3, double>& center, double radius = 0.0) const
     {
-        for (const mathx::Plane& pl : GetFrustumPlanes()) if (pl.SignedDistance(center) < -radius) return false;
-        return true;
+        return IsSphereVisible(GetFrustumPlanes(), center, radius);
+    }
+
+    // ---- плоскости из ЛЮБОЙ матрицы X -> клип (Грибб–Хартманн, FGED §6.3.5, табл. 6.2) ----
+    // Точка p в X внутри  <=>  c = A·p в клипе: -w <= x, y <= w, 0 <= z <= w.
+    // Каждое неравенство линейно по строкам A: x >= -w  <=>  (r3 + r0)·p >= 0 —
+    // это и есть плоскость в X. A = P -> камера, P·V -> мир, P·V·M -> объект.
+    // Нормали внутрь, плоскости нормированы.
+    //
+    // infiniteFar: строка дальней плоскости вырождена — (0,0,0,n) у Reversed, почти
+    // такая же у Standard (6.42). Это плоскость на бесконечности w = 0; аффинное
+    // отображение её не двигает (последняя строка (0,0,0,1)), поэтому ставим
+    // «всегда проходит» Plane((0,0,-1), +inf) в любом пространстве: расстояние +inf
+    // от любой конечной точки, нормаль не важна. Для A = P·(аффинная) — верно.
+    static std::array<mathx::Plane, kPlaneCount> ExtractPlanes(const mathx::Matrix4x4& A, ClipY clipY,
+                                                               DepthMode depth, bool infiniteFar)
+    {
+        using V4 = mathx::Vector<4, double>;
+        const double sy = ClipSignY(clipY);   // приводим строку y к «клип вниз»
+        const V4 r0{ A(0, 0), A(0, 1), A(0, 2), A(0, 3) };
+        const V4 rY{ sy * A(1, 0), sy * A(1, 1), sy * A(1, 2), sy * A(1, 3) };
+        const V4 r2{ A(2, 0), A(2, 1), A(2, 2), A(2, 3) };
+        const V4 r3{ A(3, 0), A(3, 1), A(3, 2), A(3, 3) };
+        auto comb = [](const V4& u, const V4& v, double s) {
+            return V4{ u[0] + s * v[0], u[1] + s * v[1], u[2] + s * v[2], u[3] + s * v[3] };
+        };
+        auto plane = [](const V4& v) {
+            const double inv = 1.0 / std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+            return mathx::Plane(mathx::Vector<3, double>{ v[0] * inv, v[1] * inv, v[2] * inv }, v[3] * inv);
+        };
+        std::array<mathx::Plane, kPlaneCount> pl;
+        pl[kLeft]   = plane(comb(r3, r0, +1.0));   // x >= -w
+        pl[kRight]  = plane(comb(r3, r0, -1.0));   // x <=  w
+        pl[kTop]    = plane(comb(r3, rY, +1.0));   // y >= -w
+        pl[kBottom] = plane(comb(r3, rY, -1.0));   // y <=  w
+        const bool stdDepth = depth == DepthMode::Standard;
+        const V4 zLow = r2, zHigh = comb(r3, r2, -1.0);   // z >= 0,  z <= w
+        pl[kNear] = plane(stdDepth ? zLow : zHigh);
+        pl[kFar]  = infiniteFar
+            ? mathx::Plane(mathx::Vector<3, double>{ 0.0, 0.0, -1.0 }, std::numeric_limits<double>::infinity())
+            : plane(stdDepth ? zHigh : zLow);
+        return pl;
     }
 
     // ---- готовые матрицы без объекта (листинги FGED): симметричная пирамида ------
@@ -231,33 +287,10 @@ private:
         mRecalcPlanes = true;
     }
 
-    // Плоскости из строк P (Грибб–Хартманн), в пространстве камеры, нормали внутрь.
+    // Плоскости в пространстве камеры: A = P.
     void UpdatePlanes() const
     {
-        using V4 = mathx::Vector<4, double>;
-        const mathx::Matrix4x4& P = mProjMatrix;
-        const double sy = ClipSignY(mClipY);   // приводим строку y к «клип вниз»
-        const V4 r0{ P(0, 0), P(0, 1), P(0, 2), P(0, 3) };
-        const V4 rY{ sy * P(1, 0), sy * P(1, 1), sy * P(1, 2), sy * P(1, 3) };
-        const V4 r2{ P(2, 0), P(2, 1), P(2, 2), P(2, 3) };
-        const V4 r3{ P(3, 0), P(3, 1), P(3, 2), P(3, 3) };
-        auto comb = [](const V4& u, const V4& v, double s) {
-            return V4{ u[0] + s * v[0], u[1] + s * v[1], u[2] + s * v[2], u[3] + s * v[3] };
-        };
-        auto plane = [](const V4& v) {
-            const double inv = 1.0 / std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-            return mathx::Plane(mathx::Vector<3, double>{ v[0] * inv, v[1] * inv, v[2] * inv }, v[3] * inv);
-        };
-        mFrustumPlanes[kLeft]   = plane(comb(r3, r0, +1.0));   // x >= -w
-        mFrustumPlanes[kRight]  = plane(comb(r3, r0, -1.0));   // x <=  w
-        mFrustumPlanes[kTop]    = plane(comb(r3, rY, +1.0));   // y >= -w
-        mFrustumPlanes[kBottom] = plane(comb(r3, rY, -1.0));   // y <=  w
-        const bool stdDepth = mDepthMode == DepthMode::Standard;
-        const V4 zLow = r2, zHigh = comb(r3, r2, -1.0);       // z >= 0,  z <= w
-        mFrustumPlanes[kNear] = plane(stdDepth ? zLow : zHigh);
-        mFrustumPlanes[kFar]  = IsInfinite()
-            ? mathx::Plane(mathx::Vector<3, double>{ 0.0, 0.0, -1.0 }, std::numeric_limits<double>::infinity())
-            : plane(stdDepth ? zHigh : zLow);
+        mFrustumPlanes = ExtractPlanes(mProjMatrix, mClipY, mDepthMode, IsInfinite());
         mRecalcPlanes = false;
     }
 

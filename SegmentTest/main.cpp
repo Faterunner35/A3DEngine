@@ -7,6 +7,9 @@
 //    1.3  20 000 случайных операций против рекурсивного эталона
 //    1.4  Удалённый родитель, GarbageCollect, переиспользованный индекс
 //    1.5  Matrix3x3: умножение и индексация (регрессия бага m[(r, c)])
+//    1.6  Проекции FGED: (6.36), обратная бесконечная, ClipY
+//    1.7  Frustum: матрица, обратная, плоскости, видимость, эталон Ogre
+//    1.8  Frustum: плоскости из любой матрицы X -> клип (мир, объект)
 //
 //  Часть 2. Производительность (десятки тысяч трансформов)
 //    2.1  Update(): плоский мир, лес, скелеты (цепочки)
@@ -970,6 +973,152 @@ static void TestFrustum()
     }
 }
 
+// [1.8] Плоскости из A: X -> клип (Грибб–Хартманн, FGED §6.3.5, табл. 6.2).
+// Пример: fovY = 60°, s = 16/9, n = 1, f = 100; камера в мире (0,0,-10) без поворота,
+// V = сдвиг на +10 по z; объект M = сдвиг (5,0,0). Для ClipY::Down + Standard
+// это ровно соглашение Lengyel, числа ниже совпадают с ручным счётом.
+static void TestFrustumPlanesFromMatrix()
+{
+    std::printf("[1.8] Frustum: плоскости из любой матрицы X -> клип (мир, объект)\n");
+    using DM = Frustum::DepthMode;
+    using ClipY = Frustum::ClipY;
+    using Planes = std::array<Plane, Frustum::kPlaneCount>;
+    const Radian fov(kPi / 3.0);
+    const double s = 16.0 / 9.0, n = 1.0, f = 100.0, inf = std::numeric_limits<double>::infinity();
+    const double g = 1.0 / std::tan(kPi / 6.0);                        // 1.7320508
+    auto near_ = [](double a, double b, double eps = 1e-12) { return std::fabs(a - b) <= eps; };
+    auto make = [&](ClipY cy, DM dm, double far_) {
+        Frustum F(cy, dm);
+        F.SetFOVy(fov); F.SetAspectRatio(s); F.SetNearClipDistance(n); F.SetFarClipDistance(far_);
+        return F;
+    };
+    auto translation = [](double x, double y, double z) {
+        return Matrix4x4(1, 0, 0, x,  0, 1, 0, y,  0, 0, 1, z,  0, 0, 0, 1);
+    };
+    auto apply = [](const Matrix4x4& M, const V3& p) {                 // аффинная: w = 1
+        const Vector<4, double> q = M * Vector<4, double>{ p[0], p[1], p[2], 1.0 };
+        return V3{ q[0], q[1], q[2] };
+    };
+    auto samePlane = [&](const Plane& a, const Plane& b, double eps) {
+        const V3& na = a.GetNormal(); const V3& nb = b.GetNormal();
+        const bool dist = std::isinf(a.GetDistance()) ? a.GetDistance() == b.GetDistance()
+                                                      : near_(a.GetDistance(), b.GetDistance(), eps);
+        return dist && near_(na[0], nb[0], eps) && near_(na[1], nb[1], eps) && near_(na[2], nb[2], eps);
+    };
+    const Matrix4x4 V = translation(0.0, 0.0, 10.0);                   // мир -> камера
+    const Matrix4x4 M = translation(5.0, 0.0, 0.0);                    // объект -> мир
+
+    // 1) мир, ClipY::Down + Standard: числа ручного счёта
+    const Frustum F0 = make(ClipY::Down, DM::Standard, f);
+    const Planes W = F0.GetFrustumPlanes(V);
+    {
+        // Left = r3 + r0 = (g/s, 0, 1, 10) = (0.974, 0, 1, 10), |(0.974,0,1)| = 1.3962
+        const double L = std::sqrt(g * g / (s * s) + 1.0);
+        CHECK(near_(L, 1.3962, 1e-4));
+        CHECK(near_(W[Frustum::kLeft].GetNormal()[0], g / s / L) && near_(W[Frustum::kLeft].GetNormal()[1], 0.0)
+              && near_(W[Frustum::kLeft].GetNormal()[2], 1.0 / L));
+        CHECK(near_(W[Frustum::kLeft].GetNormal()[0], 0.6978, 1e-4) && near_(W[Frustum::kLeft].GetNormal()[2], 0.7162, 1e-4));
+        CHECK(near_(W[Frustum::kLeft].GetDistance(), 10.0 / L) && near_(W[Frustum::kLeft].GetDistance(), 7.162, 1e-3));
+        // Near: z >= -9;  Far: z <= 90
+        CHECK(near_(W[Frustum::kNear].GetNormal()[2], 1.0) && near_(W[Frustum::kNear].GetDistance(), 9.0, 1e-12));
+        CHECK(near_(W[Frustum::kFar].GetNormal()[2], -1.0) && near_(W[Frustum::kFar].GetDistance(), 90.0, 1e-12));
+
+        // точка на левой грани: z_cam = 5, x = -z_cam * s / g = -5.1320
+        const double xEdge = -5.0 * s / g;
+        CHECK(near_(xEdge, -5.1320, 1e-4));
+        CHECK(near_(W[Frustum::kLeft].SignedDistance(V3{ xEdge, 0.0, -5.0 }), 0.0, 1e-12));
+        CHECK(Frustum::IsSphereVisible(W, V3{ xEdge, 0.0, -5.0 }, 1e-12));  // на границе — видна (знак нуля не важен)
+        CHECK(!Frustum::IsSphereVisible(W, V3{ xEdge - 1e-6, 0.0, -5.0 }));  // чуть левее — нет
+
+        // сферы: (-8,0,0) r=1 видна (до Left +1.58), (-20,0,0) r=3 отсечена (до Left -6.79)
+        CHECK(near_(W[Frustum::kLeft].SignedDistance(V3{ -8.0, 0.0, 0.0 }), (10.0 - 8.0 * g / s) / L));
+        CHECK(Frustum::IsSphereVisible(W, V3{ -8.0, 0.0, 0.0 }, 1.0));
+        CHECK(near_(W[Frustum::kLeft].SignedDistance(V3{ -20.0, 0.0, 0.0 }), (10.0 - 20.0 * g / s) / L));
+        CHECK(!Frustum::IsSphereVisible(W, V3{ -20.0, 0.0, 0.0 }, 3.0));
+        CHECK(Frustum::IsSphereVisible(W, V3{ -20.0, 0.0, 0.0 }, 7.0));    // радиус больше 6.79 — задевает
+        // глубина: перед near (z = -9.5) нет, за far (z = 91) нет, сфера через far — да
+        CHECK(!Frustum::IsSphereVisible(W, V3{ 0.0, 0.0, -9.5 }) && !Frustum::IsSphereVisible(W, V3{ 0.0, 0.0, 91.0 }));
+        CHECK(Frustum::IsSphereVisible(W, V3{ 0.0, 0.0, 91.0 }, 2.0));
+
+        // A = P·V явно = GetFrustumPlanes(V); тождество = плоскости камеры
+        const Planes Wx = Frustum::ExtractPlanes(F0.GetProjectionMatrix() * V, ClipY::Down, DM::Standard, false);
+        const Planes C  = F0.GetFrustumPlanes(Matrix4x4::Identity());
+        bool same = true;
+        for (int i = 0; i < Frustum::kPlaneCount; ++i)
+            same = same && samePlane(Wx[i], W[i], 0.0) && samePlane(C[i], F0.GetFrustumPlanes()[i], 0.0);
+        CHECK(same);
+    }
+
+    // 2) объект: A = P·V·M. Left = (0.974, 0, 1, 14.87) до нормировки;
+    //    точка объекта (-3,0,2) и её образ в мире (2,0,2) — одно расстояние (13.95 / L)
+    {
+        const Planes O = F0.GetFrustumPlanes(V * M);
+        const double L = std::sqrt(g * g / (s * s) + 1.0);
+        CHECK(near_(O[Frustum::kLeft].GetDistance() * L, 10.0 + 5.0 * g / s) && near_(O[Frustum::kLeft].GetDistance() * L, 14.87, 1e-2));
+        CHECK(near_(O[Frustum::kLeft].GetNormal()[0], W[Frustum::kLeft].GetNormal()[0]));   // сдвиг нормаль не меняет
+        const V3 po{ -3.0, 0.0, 2.0 }, pw = apply(M, po);
+        CHECK(near_(pw[0], 2.0) && near_(pw[2], 2.0));
+        const double dObj = O[Frustum::kLeft].SignedDistance(po), dWorld = W[Frustum::kLeft].SignedDistance(pw);
+        CHECK(near_(dObj, dWorld, 1e-12) && near_(dObj * L, 12.0 + 2.0 * g / s) && near_(dObj * L, 13.95, 1e-2));
+        bool same = true;
+        for (int i = 0; i < Frustum::kPlaneCount; ++i)
+            same = same && near_(O[i].SignedDistance(po), W[i].SignedDistance(pw), 1e-12);
+        CHECK(same);
+        CHECK(Frustum::IsSphereVisible(O, po) && !Frustum::IsSphereVisible(O, V3{ -30.0, 0.0, 0.0 }));
+    }
+
+    // 3) ClipY::Up и Reversed: матрица другая, плоскости в мире — те же самые
+    for (ClipY cy : { ClipY::Down, ClipY::Up })
+    for (DM dm : { DM::Standard, DM::Reversed }) {
+        const Planes Wc = make(cy, dm, f).GetFrustumPlanes(V);
+        bool same = true;
+        for (int i = 0; i < Frustum::kPlaneCount; ++i) same = same && samePlane(Wc[i], W[i], 1e-12);
+        CHECK(same);
+        // Top (y вниз): y >= -z_cam / g, нормаль (0, g, 1) / sqrt(g^2 + 1)
+        CHECK(near_(Wc[Frustum::kTop].GetNormal()[1], g / std::sqrt(g * g + 1.0)));
+        const Planes Wi = make(cy, dm, inf).GetFrustumPlanes(V);     // бесконечная: дальняя «всегда проходит»
+        CHECK(std::isinf(Wi[Frustum::kFar].GetDistance()) && Wi[Frustum::kFar].SignedDistance(V3{ 0.0, 0.0, 1e12 }) > 0.0);
+        CHECK(near_(Wi[Frustum::kNear].GetDistance(), 9.0, 1e-9) && samePlane(Wi[Frustum::kLeft], W[Frustum::kLeft], 1e-12));
+        CHECK(Frustum::IsSphereVisible(Wi, V3{ 0.0, 0.0, 1e6 }) && !Frustum::IsSphereVisible(Wc, V3{ 0.0, 0.0, 1e6 }));
+    }
+
+    // 4) согласованность: V жёсткая (поворот + сдвиг) -> расстояние до мировой плоскости
+    //    от p_w = расстоянию до плоскости камеры от V·p_w; видимость тоже совпадает
+    {
+        const double a = 0.7, b = -0.4;                                 // поворот вокруг y, потом x
+        const double ca = std::cos(a), sa = std::sin(a), cb = std::cos(b), sb = std::sin(b);
+        const Matrix4x4 Ry(ca, 0, sa, 0,  0, 1, 0, 0,  -sa, 0, ca, 0,  0, 0, 0, 1);
+        const Matrix4x4 Rx(1, 0, 0, 0,  0, cb, -sb, 0,  0, sb, cb, 0,  0, 0, 0, 1);
+        const Matrix4x4 Vr = Rx * Ry * translation(-3.0, 2.0, 7.0);
+        std::mt19937_64 rng(18);
+        std::uniform_real_distribution<double> U(-60.0, 60.0), R(0.0, 5.0);
+        for (ClipY cy : { ClipY::Down, ClipY::Up })
+        for (DM dm : { DM::Standard, DM::Reversed })
+        for (double far_ : { f, inf }) {
+            const Frustum F = make(cy, dm, far_);
+            const Planes Wp = F.GetFrustumPlanes(Vr);
+            const Planes& Cp = F.GetFrustumPlanes();
+            double worst = 0.0;
+            bool visSame = true, infSame = true;
+            int visible = 0;
+            for (int k = 0; k < 500; ++k) {
+                const V3 pw{ U(rng), U(rng), U(rng) }, pc = apply(Vr, pw);
+                const double r = R(rng);
+                for (int i = 0; i < Frustum::kPlaneCount; ++i) {
+                    const double dw = Wp[i].SignedDistance(pw), dc = Cp[i].SignedDistance(pc);
+                    if (std::isinf(dw) || std::isinf(dc)) infSame = infSame && dw == dc;
+                    else worst = std::fmax(worst, std::fabs(dw - dc));
+                }
+                const bool vw = Frustum::IsSphereVisible(Wp, pw, r);
+                visSame = visSame && vw == F.IsVisible(pc, r);
+                visible += vw;
+            }
+            CHECK(worst < 1e-11 && infSame && visSame);
+            CHECK(visible > 0 && visible < 500);                         // выборка задевает обе стороны
+        }
+    }
+}
+
 int main(int argc, char** argv)
 {
 #ifdef _WIN32
@@ -989,6 +1138,7 @@ int main(int argc, char** argv)
     TestMatrix3x3Indexing();
     TestProjection();
     TestFrustum();
+    TestFrustumPlanesFromMatrix();
     std::printf("  проверок: %d, провалено: %d\n\n", g_checks, g_failed);
     if (mode == "--tests-only") return g_failed ? 1 : 0;
 
