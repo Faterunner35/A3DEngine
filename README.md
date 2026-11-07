@@ -59,6 +59,7 @@ ctest --test-dir build -C Release          # correctness tests only
 | `a3d_core` | everything in `SegmentTest/` except entry points | static library: the engine |
 | `engine_tests` | `SegmentTest/main.cpp` | correctness tests, benchmark, hierarchy stress for `EntityPool` + `TransformComponent` |
 | `pga_demo` | `SegmentTest/PgaDemo.cpp` | PGA Cl(3,0,1) demo: plane through three points, geometric product, meet |
+| `a3d_header_check` | generated in `build/header_check/` | compiles every header in `SegmentTest/` alone in its own translation unit (included twice) and links them together, so a header that is not self-contained or defines a non-inline function breaks the build. Part of `ALL`; switch off with `-DA3D_HEADER_CHECK=OFF` |
 
 CMake is the only build description. There is no hand-written `.sln`.
 
@@ -77,6 +78,7 @@ If you prefer a classic solution (for example for the profiler): `cmake --preset
 |---|---|
 | `-DA3D_NATIVE=ON` | `-march=native` / `/arch:AVX2` |
 | `-DA3D_SANITIZERS=ON` | AddressSanitizer + UBSan (GCC/Clang) |
+| `-DA3D_HEADER_CHECK=OFF` | skip the `a3d_header_check` target |
 
 ---
 
