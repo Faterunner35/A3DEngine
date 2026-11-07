@@ -112,40 +112,6 @@
 
 
 
-enum class EulerResult
-{
-	// The solution is invalid (incorrect axis indices).
-	INVALID,
-
-	// The solution is unique.
-	UNIQUE,
-
-	// The solution is not unique.  A sum of angles is constant.
-	NOT_UNIQUE_SUM,
-
-	// The solution is not unique.  A difference of angles is constant.
-	NOT_UNIQUE_DIF
-};
-
-class EulerAngles {
-public:
-	EulerAngles() : axis{ 0,0,0 }, angle{ 0,0,0 }, result(EulerResult::INVALID) {}
-	EulerAngles(int32_t i0, int32_t i1, int32_t i2, double a0, double a1, double a2)
-		: axis{ i0,i1,i2 }, angle{ a0,a1,a2 }, result(EulerResult::UNIQUE) {
-	}
-
-	std::array<int32_t, 3> axis;
-	std::array<double, 3> angle;   // ВСЕГДА радианы — внутреннее соглашение, как в AxisAngle
-	EulerResult result;
-
-	// Явные, безопасные точки входа/выхода на границу с UI/аниматором:
-	Radian AngleRadians(int i) const { return Radian(angle[i]); }
-	Degree AngleDegrees(int i) const { return Degree(angle[i] * 180.0 / detail::PI); }
-};
-
-
-
-
 namespace mathx {
 
 	// ---------------------------------------------------------------------------

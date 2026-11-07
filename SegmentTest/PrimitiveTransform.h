@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Math.h"          // Radian, Degree
 #include "Matrix3x3.h"
 #include "Quaternion.h"
 #include <array>
@@ -54,10 +55,15 @@ namespace mathx {
 	// Оси хранятся РЯДОМ с углами: в Ogre шесть функций имеют одинаковую
 	// сигнатуру, но третий параметр в XYZ значит поворот вокруг Z, а в XZY —
 	// вокруг Y. Здесь смысл угла виден из данных, а не из имени функции.
+	//
+	// Единственный тип углов Эйлера в проекте. В Math.h был глобальный
+	// дубликат EulerAngles/EulerResult без пользователей; при
+	// using namespace mathx имена становились неоднозначными. Он удалён,
+	// его типизированные геттеры перенесены сюда.
 	struct EulerAngles
 	{
 		std::array<int32_t, 3> axis{ 0, 1, 2 };   // осмысленная конвенция по умолчанию
-		std::array<double, 3> angle{ 0.0, 0.0, 0.0 };
+		std::array<double, 3> angle{ 0.0, 0.0, 0.0 };   // ВСЕГДА радианы
 		EulerResult result = EulerResult::INVALID;
 
 		EulerAngles() = default;
@@ -67,6 +73,10 @@ namespace mathx {
 
 		bool IsValid()  const { return result != EulerResult::INVALID; }
 		bool IsUnique() const { return result == EulerResult::UNIQUE; }
+
+		// Явные, безопасные точки входа/выхода на границу с UI/аниматором.
+		Radian AngleRadians(int32_t i) const { return Radian(angle[i]); }
+		Degree AngleDegrees(int32_t i) const { return Degree(Radian(angle[i])); }
 	};
 
 	// ---------------------------------------------------------------------------
