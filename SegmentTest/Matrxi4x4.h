@@ -39,6 +39,15 @@ namespace mathx {
 					   0.0, 0.0, 0.0, 1.0 } {
 		}
 
+		// Сборка из линейной части L (3x3) и переноса t:
+		//   [ L  t ]
+		//   [ 0  1 ]
+		// Для обычных преобразований объектов и камеры лучше Affine4x3(L, t):
+		// Matrix4x4 нужна там, где матрицу дальше умножают на проекцию.
+		Matrix4x4(const Matrix3x3& L, const Vector<3, double>& t)
+			: Matrix4x4(Affine4x3(L, t)) {
+		}
+
 		double& operator()(int32_t r, int32_t c) { return storage[r * 4 + c]; }
 		double const& operator()(int32_t r, int32_t c) const { return storage[r * 4 + c]; }
 		double& operator[](int32_t i) { return storage[i]; }
