@@ -154,7 +154,7 @@ double RayTriangleintersectionFast(const Triangle& tri, const Ray& ray, float we
 	auto inv_det = 1.0 / DotProduct(e1, cross_1);
 
 	// scalar value of u coordinate (using cross_1!)
-	weight[1] = DotProduct(origin_ray_tri, cross_1) * inv_det;
+	weight[1] = static_cast<float>(DotProduct(origin_ray_tri, cross_1) * inv_det);
 
 	if (weight[1] < 0.0f || weight[1] > 1.0f)
 		return INFINITY;
@@ -162,7 +162,7 @@ double RayTriangleintersectionFast(const Triangle& tri, const Ray& ray, float we
 	auto cross_2 = Cross(origin_ray_tri, e1);
 
 	// scalar value of v coordinate
-	weight[2] = DotProduct(ray.getDirection(), cross_2) * inv_det;
+	weight[2] = static_cast<float>(DotProduct(ray.getDirection(), cross_2) * inv_det);
 
 	// Checking u + v <= 1.0f
 	if (weight[2] < 0.0f || (weight[1] + weight[2]) > 1.0f)
