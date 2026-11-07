@@ -1,6 +1,8 @@
 #pragma once
 #include"Geomerty.h"
 #include<array>
+#include<cstddef>
+#include<ostream>
 #include<vector>
 
 
@@ -17,13 +19,7 @@ public:
 		triangle_data[0]=  v0;
 		triangle_data[1] = v1;
 		triangle_data[2] = v2;
-       
-
-		 Vector<3, double> edge1 = v1 - v0;
-		 Vector<3, double> edge2 = v2 - v0;
-
-		normal = Cross(edge1, edge2);
-		Normalize(normal);
+		UpdateNormal();
 	}
 
 	Triangle(Vector<3, double> vec_triangle[3])
@@ -31,6 +27,7 @@ public:
 		triangle_data[0] = vec_triangle[0];
 		triangle_data[1] = vec_triangle[1];
 		triangle_data[2] = vec_triangle[2];
+		UpdateNormal();
 	}
 
 	Triangle(const std::array<double, 3>& v0, const std::array<double, 3>& v1, const std::array<double, 3>& v2)
@@ -38,6 +35,7 @@ public:
 		triangle_data[0] = v0;
 		triangle_data[1] = v1;
 		triangle_data[2] = v2;
+		UpdateNormal();
 	}
 
 
@@ -75,70 +73,82 @@ public:
 		return triangle_data[vert];
 	}
 
-	inline void SetVertex(int pos, Vector<3, double>& point)
+	inline void SetVertex(int pos, const Vector<3, double>& point)
 	{
 		triangle_data[pos] = point;
+		UpdateNormal();
 	}
 
-    inline double PointToTriangleDisctance(const Vector<3, double>& point)
-    { 
-      Vector<3,double> Normal=GetNormal();
-      Normalize(Normal);
-      Vector<3,double>point_vert_dist=point-GetVertex(0);
-      auto distance=DotProduct(point_vert_dist,Normal);
+	// Ближайшая к point точка треугольника (включая границу).
+	// Классический разбор по областям Вороного: Ericson, Real-Time Collision
+	// Detection, 5.1.5 (ClosestPtPointTriangle). Нормаль не используется,
+	// поэтому годится и для неединичной, и для нулевой нормали.
+	Vector<3, double> ClosestPoint(const Vector<3, double>& point) const;
 
-    }
+	// Расстояние (без знака) от точки до треугольника как множества точек:
+	// |point − ClosestPoint(point)|. Не путать с расстоянием до ПЛОСКОСТИ
+	// треугольника — оно совпадает только когда проекция попала внутрь.
+	// Раньше функция считала расстояние до плоскости и ничего не возвращала.
+	double PointToTriangleDisctance(const Vector<3, double>& point) const;
 
-    
+
 	std::array<Vector<3,double>,3>triangle_data;
 	Vector<3, double> normal;
+
+private:
+	// Единичная нормаль (v1 − v0) × (v2 − v0); для вырожденного треугольника
+	// нулевая. Раньше её вычислял только конструктор из трёх Vector, а
+	// остальные оставляли нулевой.
+	void UpdateNormal()
+	{
+		normal = Cross(triangle_data[1] - triangle_data[0], triangle_data[2] - triangle_data[0]);
+		Normalize(normal);
+	}
 
 };
 
 class Edge
 {
-	Edge(const Vector<3, double>& p1, Vector<3, double>& p2)
+public:
+	Edge(const Vector<3, double>& p1, const Vector<3, double>& p2)
 	{
 	   edge_[0]=p1;
 	   edge_[1]=p2;
-	   
+
    }
 
-	inline bool operator >(const Edge& edg_2)
+	// Лексикографический порядок по (edge_[0], edge_[1]) — только для
+	// упорядоченных контейнеров, геометрического смысла у него нет (как
+	// operator<=> у Vector). Раньше результат сравнения отбрасывался.
+	inline bool operator >(const Edge& edg_2) const
 	{
-        edge_[0]> edg_2.edge_[0];
-		
-
-   }
+		return edge_ > edg_2.edge_;
+	}
 
 std::array<Vector<3,double>,2>edge_;
 
 };
 
 
+// Выпуклый плоский многоугольник — список вершин против часовой стрелки
+// относительно getNormal(). Семантика методов — как у Ogre::Polygon, откуда
+// класс взят; тела в Primitives.cpp.
+//
+// Удалены объявления без определений, смысл которых из кода не
+// восстанавливается и которыми никто не пользовался: список треугольников
+// (TriangleList/VertexTriangleList из кортежей <size_t, size_t, Vector>,
+// конструктор от него, insertTriangle, GetTriangle, getVertexTriangleList,
+// CalculateNormalsInTriangleArray) и HasIntersection с EIntersectionType.
 class Polygon
 {
-       
+
     public:
         typedef std::vector<Vector<3,double>> VertexList;
-        typedef std::array<std::tuple<size_t, size_t,Vector<3,double>>, 3> TriangleList;
-        typedef std::vector<std::array<std::tuple<size_t, size_t, Vector<3,double>>, 3>> VertexTriangleList;
-        
+
         typedef std::pair<Vector<3,double>, Vector<3,double>> Edge;
-        
-         typedef std::vector<Vector<3,double>> array_of_normals;
-        
-        enum EIntersectionType
-        {
-            eIT_None,
-            eIT_Intersection,
-            eIT_JustTouch,
-        };
 
     protected:
         VertexList      mVertexList;
-        TriangleList        triangle_polygon;
-        mutable  VertexTriangleList mTriangleList;
         mutable  Vector<3,double> mNormal;
         mutable bool    mIsNormalSet;
         /** Updates the normal.
@@ -147,40 +157,23 @@ class Polygon
 
     public:
         Polygon();
-        Polygon(std::array<std::tuple<size_t, size_t, Vector<3,double>>, 3>& triangle);
-        ~Polygon();
-        Polygon(const Polygon& cpy);
+        ~Polygon() = default;
+        Polygon(const Polygon& cpy) = default;
+        Polygon& operator=(const Polygon& cpy) = default;
 
         /** Inserts a vertex at a specific position.
         @note Vertices must be coplanar.
         */
         void insertVertex(const Vector<3,double>& vdata, size_t vertex);
 
-        static EIntersectionType HasIntersection(std::unique_ptr<Polygon>pPolygon0, std::unique_ptr<Polygon>pPolygon1);
         /** Inserts a vertex at the end of the polygon.
         @note Vertices must be coplanar.
         */
         void insertVertex(const Vector<3,double>& vdata);
 
-        std::vector<Vector<3,double>>& CalculateNormalsInTriangleArray();
-
-        inline  Vector<3,double> CalculateNormalToTriangle(std::array<Vector<3,double>,3>& triangle);
-
-        inline TriangleList GetTriangle() const {
-
-            return this->triangle_polygon;
-
-        }
-
-        void insertTriangle(const std::array<std::tuple<size_t, size_t, Vector<3,double>>, 3>& triangle);
-
-        //returns triangles list
-
-        inline  VertexTriangleList* getVertexTriangleList() const
-        {
-            return &mTriangleList;
-
-        }
+        // Единичная нормаль треугольника (t1 − t0) × (t2 − t0); нулевая для
+        // вырожденного.
+        static Vector<3,double> CalculateNormalToTriangle(const std::array<Vector<3,double>,3>& triangle);
 
         /** Returns a vertex.
          */
@@ -242,27 +235,29 @@ class Polygon
          */
          friend std::ostream& operator<<(std::ostream& strm, const Polygon& poly);
     };
-    
+
 
     class OOB
     {
-      public: 
+      public:
        OOB()=default;
        ~OOB()=default;
-       
+
     private:
    Vector<3,double>center_oob;
     std::array<Vector<3, double>, 3>oob_axis;
    Vector<3, double> half_extents;
 
     public:
-		    void projectOntoAxis(OOB& box, const Vector<3,double>& axis, float& min, float& max)
+		    // Раньше проецировался центр ЭТОГО ящика, а не box; полуразмеры брались
+		    // из box. Совпадало только при вызове box.projectOntoAxis(box, ...).
+		    void projectOntoAxis(const OOB& box, const Vector<3,double>& axis, double& min, double& max) const
             {
 			// Project the center of the box ont the axis
-			float centerProjection =DotProduct(center_oob,axis);
-           
+			double centerProjection =DotProduct(box.center_oob,axis);
+
 			// Compute the projection of the half-extents onto the axis
-			float extent = std::abs(DotProduct(box.oob_axis[0],(axis)) * box.half_extents[0]) +
+			double extent = std::abs(DotProduct(box.oob_axis[0],(axis)) * box.half_extents[0]) +
                 std::abs(DotProduct(box.oob_axis[1], (axis)) * box.half_extents[1]) +
                 std::abs(DotProduct(box.oob_axis[2], (axis)) * box.half_extents[2]);
 
@@ -280,5 +275,3 @@ class Polygon
    };
 
  }
-
-

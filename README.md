@@ -9,14 +9,16 @@ The project is a research platform. Each subsystem is written from first princip
 ## What is here now
 
 ### Math core (`SegmentTest/`)
+Headers hold declarations, templates and small hot-path inline code (operators, dot/cross, per-object tests); heavier non-template routines live in the matching `.cpp`.
+
 | File | What it does |
 |---|---|
 | `Geomerty.h` | `Vector<N,T>`: dot, cross, robust length, Gram–Schmidt orthonormalisation |
-| `Matrix3x3.hpp`, `Matrxi4x4.hpp` | 3×3 / 4×4 matrices, determinant, adjugate inverse |
-| `Affine4X3.hpp` | Affine transform stored as 3×4 (the `0 0 0 1` row is implied): composition in 36 multiplies, inverse via cofactors with a relative (Hadamard) singularity test, rigid inverse, normal matrix `sign(det)·cof(A)` |
-| `Quaternion.hpp`, `QuatSquad.hpp`, `QuatInterpolationPrecomputed.hpp` | Quaternions, slerp/squad interpolation |
-| `TransfromMatrix.hpp` | `MakeTransform(T, R, S)` and its exact inverse built from TRS without inverting a matrix |
-| `EulerAngles.hpp`, `PrimitiveTransform.hpp` | Euler angles, elementary rotations |
+| `Matrix3x3.h`, `Matrxi4x4.h` | 3×3 / 4×4 matrices, determinant, adjugate inverse |
+| `Affine4X3.h` | Affine transform stored as 3×4 (the `0 0 0 1` row is implied): composition in 36 multiplies, inverse via cofactors with a relative (Hadamard) singularity test, rigid inverse, normal matrix `sign(det)·cof(A)` |
+| `Quaternion.h`, `QuatSquad.h`, `QuatInterpolationPrecomputed.h` | Quaternions, slerp/squad interpolation |
+| `TransfromMatrix.h` | `MakeTransform(T, R, S)` and its exact inverse built from TRS without inverting a matrix |
+| `PrimitiveTransform.h` (+ `EulerAngles.cpp`) | Euler angles, elementary rotations |
 
 ### Geometry
 `Plane.h`, `Ray.h`, `Sphere.h`, `AABB.h`, `GeomIntersector.h`, `ManifoldMesh.h`: primitives, intersections, and a manifold triangle mesh with edge/triangle adjacency.
@@ -25,7 +27,7 @@ The project is a research platform. Each subsystem is written from first princip
 `WedgeProduct.h` is a `Multivector` for projective geometric algebra Cl(3,0,1) with wedge `^`, regressive product `&` (meet/join), geometric product `*` and duality. A plane through three points is just `R ^ S ^ T`. A line where two planes meet is `P & Q`.
 
 ### ECS: entities and transforms
-`Entity.hpp` and `TranformManager.hpp`:
+`Entity.h` and `TranformManager.h`:
 
 - **`EntityPool`**: a fixed-capacity pool of `{index, generation}` handles. `Create` and `Destroy` are O(1). Freed slots are reused in FIFO order, so a stale handle is always detected.
 - **`TransformComponent`**: dense structure-of-arrays storage behind a sparse set.
@@ -57,6 +59,7 @@ ctest --test-dir build -C Release          # correctness tests only
 | `a3d_core` | everything in `SegmentTest/` except entry points | static library: the engine |
 | `engine_tests` | `SegmentTest/main.cpp` | correctness tests, benchmark, hierarchy stress for `EntityPool` + `TransformComponent` |
 | `pga_demo` | `SegmentTest/PgaDemo.cpp` | PGA Cl(3,0,1) demo: plane through three points, geometric product, meet |
+| `a3d_header_check` | generated in `build/header_check/` | compiles every header in `SegmentTest/` alone in its own translation unit (included twice) and links them together, so a header that is not self-contained or defines a non-inline function breaks the build. Part of `ALL`; switch off with `-DA3D_HEADER_CHECK=OFF` |
 
 CMake is the only build description. There is no hand-written `.sln`.
 
@@ -75,6 +78,7 @@ If you prefer a classic solution (for example for the profiler): `cmake --preset
 |---|---|
 | `-DA3D_NATIVE=ON` | `-march=native` / `/arch:AVX2` |
 | `-DA3D_SANITIZERS=ON` | AddressSanitizer + UBSan (GCC/Clang) |
+| `-DA3D_HEADER_CHECK=OFF` | skip the `a3d_header_check` target |
 
 ---
 
@@ -166,9 +170,9 @@ A3DEngine/
 └── SegmentTest/
     ├── main.cpp               # ECS tests, benchmark, stress (engine_tests)
     ├── SegmentTest.cpp        # PGA demo (not built yet)
-    ├── Entity.hpp             # EntityPool
-    ├── TranformManager.hpp    # TransformComponent
-    ├── Affine4X3.hpp, TransfromMatrix.hpp, Quaternion.hpp, Matrix3x3.hpp, ...
+    ├── Entity.h               # EntityPool
+    ├── TranformManager.h      # TransformComponent
+    ├── Affine4X3.h, TransfromMatrix.h, Quaternion.h, Matrix3x3.h, ...
     ├── WedgeProduct.h         # PGA multivector
     └── ManifoldMesh.h, Plane.h, Ray.h, Sphere.h, AABB.h, ...
 ```

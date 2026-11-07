@@ -1,7 +1,19 @@
 #pragma once
-#include<stdint.h>
+// Порт из Geometric Tools Engine (GTE), David Eberly, Geometric Tools.
+// Distributed under the Boost Software License, Version 1.0.
+// https://www.boost.org/LICENSE_1_0.txt
+#include<array>
+#include<cstddef>
+#include<cstdint>
+#include<type_traits>
 #include<utility>
 #include"Hash.h"
+
+// FeatureKey/EdgeKey живут в Geom_Exp рядом с HashCombine и TriangleKey:
+// в глобальном пространстве вызов HashCombine из FeatureKey::operator()
+// не находился (ADL по size_t/int32_t ничего не ищет).
+namespace Geom_Exp
+{
 
 
 template <int32_t N, bool Ordered>
@@ -95,7 +107,6 @@ public:
 };
 
 
-
 template <bool Ordered>
 class EdgeKey : public FeatureKey<2, Ordered>
 {
@@ -140,4 +151,4 @@ private:
 	}
 };
 
-
+} // namespace Geom_Exp

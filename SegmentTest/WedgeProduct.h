@@ -78,18 +78,8 @@ public:
 	}
 
 	// ========================= grade-проекция ===============================
-	Multivector grade(int g) const {
-		Multivector r;
-		for (uint32_t m = 0; m < COUNT; ++m)
-			if (std::popcount(m) == g) r.c[m] = c[m];
-		return r;
-	}
-	int top_grade() const {
-		int g = -1;
-		for (uint32_t m = 0; m < COUNT; ++m)
-			if (std::fabs(c[m]) > 1e-7f) g = std::max<int>(g, std::popcount(m));
-		return g;
-	}
+	Multivector grade(int g) const;
+	int top_grade() const;
 
 	// ===================== ГЛАВНЫЕ ПРОИЗВЕДЕНИЯ =============================
 
@@ -110,26 +100,9 @@ public:
 
 	// Reverse (антиавтоморфизм ~): обращение порядка векторных сомножителей.
 	// На грейде k действует знаком (-1)^{k(k-1)/2}: скаляр/вектор +, бивектор/тривектор -.
-	Multivector reverse() const {
-		Multivector r;
-		for (uint32_t m = 0; m < COUNT; ++m) {
-			int k = std::popcount(m);
-			int sign = ((k * (k - 1) / 2) & 1) ? -1 : +1;
-			r.c[m] = sign * c[m];
-		}
-		return r;
-	}
+	Multivector reverse() const;
 
-	Multivector dual() const {                                // right complement
-		constexpr uint32_t I = COUNT - 1;                     // 0b1111
-		Multivector r;
-		for (uint32_t m = 0; m < COUNT; ++m) {
-			if (c[m] == 0.0f) continue;
-			uint32_t comp = I ^ m;
-			r.c[comp] = wedge_sign(m, comp) * c[m];
-		}
-		return r;
-	}
+	Multivector dual() const;                                 // right complement
 
 	Multivector antiwedge(const Multivector& o) const {       // &  regressive
 		return dual().wedge(o.dual()).dual();
@@ -142,67 +115,23 @@ public:
 
 	// Scalar product: <u * v>_0  — только скалярная часть.
 	// Для двух grade-1 векторов даёт евклидов dot по метрике.
-	Multivector scalar_product(const Multivector& o) const {
-		return geometric(o).grade(0);
-	}
+	Multivector scalar_product(const Multivector& o) const;
 
 	// Left contraction u ⌋ v: проекция на grade (b - a).
 	// "u contracted INTO v" — удаляет u-часть из v, понижает грейд.
 	// Ноль, если grade(u) > grade(v).
-	Multivector left_contract(const Multivector& o) const {
-		Multivector r;
-		for (int a = 0; a <= DIM; ++a) {
-			for (int b = 0; b <= DIM; ++b) {
-				int target = b - a;
-				if (target < 0) continue;                          // left: b>=a
-				r = r + grade(a).geometric(o.grade(b)).grade(target);
-			}
-		}
-		return r;
-	}
+	Multivector left_contract(const Multivector& o) const;
 
 	// Right contraction u ⌊ v: проекция на grade (a - b). Симметрично.
-	Multivector right_contract(const Multivector& o) const {
-		Multivector r;
-		for (int a = 0; a <= DIM; ++a) {
-			for (int b = 0; b <= DIM; ++b) {
-				int target = a - b;
-				if (target < 0) continue;
-				r = r + grade(a).geometric(o.grade(b)).grade(target);
-			}
-		}
-		return r;
-	}
+	Multivector right_contract(const Multivector& o) const;
 
 	// Симметричный dot Hestenes'а: |<uv>_(|a-b|)|. Часто именно это имеют в виду.
 	// Для векторов совпадает со scalar_product, для высших — самая младшая grade.
-	Multivector dot(const Multivector& o) const {
-		Multivector r;
-		for (int a = 0; a <= DIM; ++a) {
-			for (int b = 0; b <= DIM; ++b) {
-				int target = std::abs(a - b);
-				r = r + grade(a).geometric(o.grade(b)).grade(target);
-			}
-		}
-		return r;
-	}
+	Multivector dot(const Multivector& o) const;
 
 	// ======================== утилиты =======================================
-	bool approx_equal(const Multivector& o, float eps = 1e-5f) const {
-		for (uint32_t m = 0; m < COUNT; ++m)
-			if (std::fabs(c[m] - o.c[m]) > eps) return false;
-		return true;
-	}
-	std::string str() const {
-		std::string s; bool first = true;
-		for (uint32_t m = 0; m < COUNT; ++m) {
-			if (std::fabs(c[m]) < 1e-7f) continue;
-			if (!first) s += " + ";
-			s += std::to_string(c[m]) + "*" + blade_name(m);
-			first = false;
-		}
-		return first ? "0" : s;
-	}
+	bool approx_equal(const Multivector& o, float eps = 1e-5f) const;
+	std::string str() const;
 
 private:
 	struct BladeProduct { uint32_t blade; int sign; };
@@ -249,16 +178,8 @@ private:
 		return r;
 	}
 
-	static std::string blade_name(uint32_t m) {
-		if (m == 0) return "1";
-		std::string s;
-		for (int i = 0; i < DIM; ++i)
-			if (m & (1u << i)) s += "e" + std::to_string(i + 1);
-		return s;
-	}
+	static std::string blade_name(uint32_t m);
 };
 
 inline Multivector operator*(float s, const Multivector& m) { return m * s; }
-inline std::ostream& operator<<(std::ostream& os, const Multivector& mv) {
-	return os << mv.str();
-}
+std::ostream& operator<<(std::ostream& os, const Multivector& mv);

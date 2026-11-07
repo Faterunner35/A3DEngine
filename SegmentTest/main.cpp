@@ -7,6 +7,14 @@
 //    1.3  20 000 случайных операций против рекурсивного эталона
 //    1.4  Удалённый родитель, GarbageCollect, переиспользованный индекс
 //    1.5  Matrix3x3: умножение и индексация (регрессия бага m[(r, c)])
+//    1.6  Проекции FGED: (6.36), обратная бесконечная, ClipY
+//    1.7  Frustum: матрица, обратная, плоскости, видимость, эталон Ogre
+//    1.8  Frustum: плоскости из любой матрицы X -> клип (мир, объект)
+//    1.9  Sphere::merge: раздельные, пересекающиеся, вложенные, общий центр
+//    1.10 Точка–треугольник (Ericson 5.1.5): области вершин, рёбер, грани
+//    1.11 Луч–треугольник, Мёллер–Трумбор: t и барицентрические, промахи
+//    1.12 Matrix: MultiplyAB на примере 2x3 * 3x2
+//    1.13 ETManifoldMesh: вставка, смежность, неманифолдное ребро, удаление
 //
 //  Часть 2. Производительность (десятки тысяч трансформов)
 //    2.1  Update(): плоский мир, лес, скелеты (цепочки)
@@ -26,8 +34,13 @@
 //  Сборка:  cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 //  Запуск:  build/engine_tests   (Windows: build\Release\engine_tests.exe)
 // =============================================================================
-#include "TranformManager.hpp"
-#include "Frustum.hpp"
+#include "TranformManager.h"
+#include "Frustum.h"
+#include "GeomCore.h"
+#include "ManifoldMesh.h"
+#include "Matrix.h"
+#include "Primitives.h"
+#include "Sphere.h"
 
 #include <algorithm>
 #include <chrono>
@@ -37,6 +50,7 @@
 #include <memory>
 #include <numeric>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -798,7 +812,7 @@ static void StressOperationCosts(uint32_t n)
     // Одна смена родителя, гарантированно ломающая порядок: массивы отсортированы
     // по глубине, поэтому корень стоит левее самого глубокого узла. Корень,
     // подвешенный к нему, получает родителя ПРАВЕЕ себя → Update перестраивает всё.
-    auto depthOf = [&](Entity e) { int d = 0; for (Entity a = s->tc.Parent(e); !a.IsNull(); a = s->tc.Parent(a)) ++d; return d; };
+    auto depthOf = [&](Entity e) { int d = 0; for (Entity p = s->tc.Parent(e); !p.IsNull(); p = s->tc.Parent(p)) ++d; return d; };
     Entity deepest = es[0];
     int maxDepth = 0;
     for (Entity e : es) { const int d = depthOf(e); if (d > maxDepth) { maxDepth = d; deepest = e; } }
@@ -949,8 +963,8 @@ static void TestFrustum()
         CHECK(maxDiff(OgreProjectionRS(oo) * S, O.GetProjectionMatrix()) < 1e-12);
         CHECK(isIdentity(O.GetProjectionMatrix() * O.GetInverseProjectionMatrix()));
         {
-            const V4 q = O.GetProjectionMatrix() * V4{ 0.0, 0.0, 40.0, 1.0 };
-            CHECK(near_(O.CameraDepth(q[2] / q[3]), 40.0, 1e-9) && near_(O.CameraDepth(0.0), n));
+            const V4 qo = O.GetProjectionMatrix() * V4{ 0.0, 0.0, 40.0, 1.0 };
+            CHECK(near_(O.CameraDepth(qo[2] / qo[3]), 40.0, 1e-9) && near_(O.CameraDepth(0.0), n));
         }
 
         // ортография с камерой внутри ящика: n = -5, f = 5 (z = 0 ничем не выделен)
@@ -968,6 +982,360 @@ static void TestFrustum()
             CHECK(near_(B.GetFrustumPlanes()[Frustum::kNear].GetDistance(), 5.0));     // z >= -5
         }
     }
+}
+
+// [1.8] Плоскости из A: X -> клип (Грибб–Хартманн, FGED §6.3.5, табл. 6.2).
+// Пример: fovY = 60°, s = 16/9, n = 1, f = 100; камера в мире (0,0,-10) без поворота,
+// V = сдвиг на +10 по z; объект M = сдвиг (5,0,0). Для ClipY::Down + Standard
+// это ровно соглашение Lengyel, числа ниже совпадают с ручным счётом.
+static void TestFrustumPlanesFromMatrix()
+{
+    std::printf("[1.8] Frustum: плоскости из любой матрицы X -> клип (мир, объект)\n");
+    using DM = Frustum::DepthMode;
+    using ClipY = Frustum::ClipY;
+    using Planes = std::array<Plane, Frustum::kPlaneCount>;
+    const Radian fov(kPi / 3.0);
+    const double s = 16.0 / 9.0, n = 1.0, f = 100.0, inf = std::numeric_limits<double>::infinity();
+    const double g = 1.0 / std::tan(kPi / 6.0);                        // 1.7320508
+    auto near_ = [](double a, double b, double eps = 1e-12) { return std::fabs(a - b) <= eps; };
+    auto make = [&](ClipY cy, DM dm, double far_) {
+        Frustum F(cy, dm);
+        F.SetFOVy(fov); F.SetAspectRatio(s); F.SetNearClipDistance(n); F.SetFarClipDistance(far_);
+        return F;
+    };
+    auto translation = [](double x, double y, double z) {
+        return Matrix4x4(1, 0, 0, x,  0, 1, 0, y,  0, 0, 1, z,  0, 0, 0, 1);
+    };
+    auto apply = [](const Matrix4x4& M, const V3& p) {                 // аффинная: w = 1
+        const Vector<4, double> q = M * Vector<4, double>{ p[0], p[1], p[2], 1.0 };
+        return V3{ q[0], q[1], q[2] };
+    };
+    auto samePlane = [&](const Plane& a, const Plane& b, double eps) {
+        const V3& na = a.GetNormal(); const V3& nb = b.GetNormal();
+        const bool dist = std::isinf(a.GetDistance()) ? a.GetDistance() == b.GetDistance()
+                                                      : near_(a.GetDistance(), b.GetDistance(), eps);
+        return dist && near_(na[0], nb[0], eps) && near_(na[1], nb[1], eps) && near_(na[2], nb[2], eps);
+    };
+    const Matrix4x4 V = translation(0.0, 0.0, 10.0);                   // мир -> камера
+    const Matrix4x4 M = translation(5.0, 0.0, 0.0);                    // объект -> мир
+
+    // 1) мир, ClipY::Down + Standard: числа ручного счёта
+    const Frustum F0 = make(ClipY::Down, DM::Standard, f);
+    const Planes W = F0.GetFrustumPlanes(V);
+    {
+        // Left = r3 + r0 = (g/s, 0, 1, 10) = (0.974, 0, 1, 10), |(0.974,0,1)| = 1.3962
+        const double L = std::sqrt(g * g / (s * s) + 1.0);
+        CHECK(near_(L, 1.3962, 1e-4));
+        CHECK(near_(W[Frustum::kLeft].GetNormal()[0], g / s / L) && near_(W[Frustum::kLeft].GetNormal()[1], 0.0)
+              && near_(W[Frustum::kLeft].GetNormal()[2], 1.0 / L));
+        CHECK(near_(W[Frustum::kLeft].GetNormal()[0], 0.6978, 1e-4) && near_(W[Frustum::kLeft].GetNormal()[2], 0.7162, 1e-4));
+        CHECK(near_(W[Frustum::kLeft].GetDistance(), 10.0 / L) && near_(W[Frustum::kLeft].GetDistance(), 7.162, 1e-3));
+        // Near: z >= -9;  Far: z <= 90
+        CHECK(near_(W[Frustum::kNear].GetNormal()[2], 1.0) && near_(W[Frustum::kNear].GetDistance(), 9.0, 1e-12));
+        CHECK(near_(W[Frustum::kFar].GetNormal()[2], -1.0) && near_(W[Frustum::kFar].GetDistance(), 90.0, 1e-12));
+
+        // точка на левой грани: z_cam = 5, x = -z_cam * s / g = -5.1320
+        const double xEdge = -5.0 * s / g;
+        CHECK(near_(xEdge, -5.1320, 1e-4));
+        CHECK(near_(W[Frustum::kLeft].SignedDistance(V3{ xEdge, 0.0, -5.0 }), 0.0, 1e-12));
+        CHECK(Frustum::IsSphereVisible(W, V3{ xEdge, 0.0, -5.0 }, 1e-12));  // на границе — видна (знак нуля не важен)
+        CHECK(!Frustum::IsSphereVisible(W, V3{ xEdge - 1e-6, 0.0, -5.0 }));  // чуть левее — нет
+
+        // сферы: (-8,0,0) r=1 видна (до Left +1.58), (-20,0,0) r=3 отсечена (до Left -6.79)
+        CHECK(near_(W[Frustum::kLeft].SignedDistance(V3{ -8.0, 0.0, 0.0 }), (10.0 - 8.0 * g / s) / L));
+        CHECK(Frustum::IsSphereVisible(W, V3{ -8.0, 0.0, 0.0 }, 1.0));
+        CHECK(near_(W[Frustum::kLeft].SignedDistance(V3{ -20.0, 0.0, 0.0 }), (10.0 - 20.0 * g / s) / L));
+        CHECK(!Frustum::IsSphereVisible(W, V3{ -20.0, 0.0, 0.0 }, 3.0));
+        CHECK(Frustum::IsSphereVisible(W, V3{ -20.0, 0.0, 0.0 }, 7.0));    // радиус больше 6.79 — задевает
+        // глубина: перед near (z = -9.5) нет, за far (z = 91) нет, сфера через far — да
+        CHECK(!Frustum::IsSphereVisible(W, V3{ 0.0, 0.0, -9.5 }) && !Frustum::IsSphereVisible(W, V3{ 0.0, 0.0, 91.0 }));
+        CHECK(Frustum::IsSphereVisible(W, V3{ 0.0, 0.0, 91.0 }, 2.0));
+
+        // A = P·V явно = GetFrustumPlanes(V); тождество = плоскости камеры
+        const Planes Wx = Frustum::ExtractPlanes(F0.GetProjectionMatrix() * V, ClipY::Down, DM::Standard, false);
+        const Planes C  = F0.GetFrustumPlanes(Matrix4x4::Identity());
+        bool same = true;
+        for (int i = 0; i < Frustum::kPlaneCount; ++i)
+            same = same && samePlane(Wx[i], W[i], 0.0) && samePlane(C[i], F0.GetFrustumPlanes()[i], 0.0);
+        CHECK(same);
+    }
+
+    // 2) объект: A = P·V·M. Left = (0.974, 0, 1, 14.87) до нормировки;
+    //    точка объекта (-3,0,2) и её образ в мире (2,0,2) — одно расстояние (13.95 / L)
+    {
+        const Planes O = F0.GetFrustumPlanes(V * M);
+        const double L = std::sqrt(g * g / (s * s) + 1.0);
+        CHECK(near_(O[Frustum::kLeft].GetDistance() * L, 10.0 + 5.0 * g / s) && near_(O[Frustum::kLeft].GetDistance() * L, 14.87, 1e-2));
+        CHECK(near_(O[Frustum::kLeft].GetNormal()[0], W[Frustum::kLeft].GetNormal()[0]));   // сдвиг нормаль не меняет
+        const V3 po{ -3.0, 0.0, 2.0 }, pw = apply(M, po);
+        CHECK(near_(pw[0], 2.0) && near_(pw[2], 2.0));
+        const double dObj = O[Frustum::kLeft].SignedDistance(po), dWorld = W[Frustum::kLeft].SignedDistance(pw);
+        CHECK(near_(dObj, dWorld, 1e-12) && near_(dObj * L, 12.0 + 2.0 * g / s) && near_(dObj * L, 13.95, 1e-2));
+        bool same = true;
+        for (int i = 0; i < Frustum::kPlaneCount; ++i)
+            same = same && near_(O[i].SignedDistance(po), W[i].SignedDistance(pw), 1e-12);
+        CHECK(same);
+        CHECK(Frustum::IsSphereVisible(O, po) && !Frustum::IsSphereVisible(O, V3{ -30.0, 0.0, 0.0 }));
+    }
+
+    // 3) ClipY::Up и Reversed: матрица другая, плоскости в мире — те же самые
+    for (ClipY cy : { ClipY::Down, ClipY::Up })
+    for (DM dm : { DM::Standard, DM::Reversed }) {
+        const Planes Wc = make(cy, dm, f).GetFrustumPlanes(V);
+        bool same = true;
+        for (int i = 0; i < Frustum::kPlaneCount; ++i) same = same && samePlane(Wc[i], W[i], 1e-12);
+        CHECK(same);
+        // Top (y вниз): y >= -z_cam / g, нормаль (0, g, 1) / sqrt(g^2 + 1)
+        CHECK(near_(Wc[Frustum::kTop].GetNormal()[1], g / std::sqrt(g * g + 1.0)));
+        const Planes Wi = make(cy, dm, inf).GetFrustumPlanes(V);     // бесконечная: дальняя «всегда проходит»
+        CHECK(std::isinf(Wi[Frustum::kFar].GetDistance()) && Wi[Frustum::kFar].SignedDistance(V3{ 0.0, 0.0, 1e12 }) > 0.0);
+        CHECK(near_(Wi[Frustum::kNear].GetDistance(), 9.0, 1e-9) && samePlane(Wi[Frustum::kLeft], W[Frustum::kLeft], 1e-12));
+        CHECK(Frustum::IsSphereVisible(Wi, V3{ 0.0, 0.0, 1e6 }) && !Frustum::IsSphereVisible(Wc, V3{ 0.0, 0.0, 1e6 }));
+    }
+
+    // 4) согласованность: V жёсткая (поворот + сдвиг) -> расстояние до мировой плоскости
+    //    от p_w = расстоянию до плоскости камеры от V·p_w; видимость тоже совпадает
+    {
+        const double a = 0.7, b = -0.4;                                 // поворот вокруг y, потом x
+        const double ca = std::cos(a), sa = std::sin(a), cb = std::cos(b), sb = std::sin(b);
+        const Matrix4x4 Ry(ca, 0, sa, 0,  0, 1, 0, 0,  -sa, 0, ca, 0,  0, 0, 0, 1);
+        const Matrix4x4 Rx(1, 0, 0, 0,  0, cb, -sb, 0,  0, sb, cb, 0,  0, 0, 0, 1);
+        const Matrix4x4 Vr = Rx * Ry * translation(-3.0, 2.0, 7.0);
+        std::mt19937_64 rng(18);
+        std::uniform_real_distribution<double> U(-60.0, 60.0), R(0.0, 5.0);
+        for (ClipY cy : { ClipY::Down, ClipY::Up })
+        for (DM dm : { DM::Standard, DM::Reversed })
+        for (double far_ : { f, inf }) {
+            const Frustum F = make(cy, dm, far_);
+            const Planes Wp = F.GetFrustumPlanes(Vr);
+            const Planes& Cp = F.GetFrustumPlanes();
+            double worst = 0.0;
+            bool visSame = true, infSame = true;
+            int visible = 0;
+            for (int k = 0; k < 500; ++k) {
+                const V3 pw{ U(rng), U(rng), U(rng) }, pc = apply(Vr, pw);
+                const double r = R(rng);
+                for (int i = 0; i < Frustum::kPlaneCount; ++i) {
+                    const double dw = Wp[i].SignedDistance(pw), dc = Cp[i].SignedDistance(pc);
+                    if (std::isinf(dw) || std::isinf(dc)) infSame = infSame && dw == dc;
+                    else worst = std::fmax(worst, std::fabs(dw - dc));
+                }
+                const bool vw = Frustum::IsSphereVisible(Wp, pw, r);
+                visSame = visSame && vw == F.IsVisible(pc, r);
+                visible += vw;
+            }
+            CHECK(worst < 1e-11 && infSame && visSame);
+            CHECK(visible > 0 && visible < 500);                         // выборка задевает обе стороны
+        }
+    }
+}
+
+// =============================================================================
+//  1.9–1.13  Геометрия: исправления из ревизии заголовков (Sphere::merge,
+//  точка–треугольник, Мёллер–Трумбор, MultiplyAB, ETManifoldMesh).
+//  Все ожидаемые числа посчитаны вручную, см. комментарии у проверок.
+// =============================================================================
+static bool NearV(const V3& a, const V3& b, double eps = 1e-12)
+{
+    return std::fabs(a[0] - b[0]) <= eps && std::fabs(a[1] - b[1]) <= eps && std::fabs(a[2] - b[2]) <= eps;
+}
+
+// [1.9] Наименьшая сфера, содержащая две: R = (d + r1 + r2)/2, центр сдвигается
+// от c1 к c2 на R − r1; при вложении — бо́льшая из двух.
+static void TestSphereMerge()
+{
+    std::printf("[1.9] Sphere::merge: раздельные, пересекающиеся, вложенные, общий центр\n");
+    auto merged = [](Sphere a, const Sphere& b) { a.merge(b); return a; };
+    auto near_ = [](double a, double b) { return std::fabs(a - b) <= 1e-12; };
+
+    // раздельные: d = 4, R = (4+1+1)/2 = 3, c = (2,0,0) — отрезок [-1, 5] по x
+    Sphere s = merged(Sphere(V3{ 0, 0, 0 }, 1.0), Sphere(V3{ 4, 0, 0 }, 1.0));
+    CHECK(near_(s.getRadius(), 3.0) && NearV(s.getCenter(), V3{ 2, 0, 0 }));
+    // раздельные, разные радиусы: d = 10, R = (10+1+3)/2 = 7, c = 0 + 10·(7−1)/10 = 6 — [-1, 13]
+    s = merged(Sphere(V3{ 0, 0, 0 }, 1.0), Sphere(V3{ 10, 0, 0 }, 3.0));
+    CHECK(near_(s.getRadius(), 7.0) && NearV(s.getCenter(), V3{ 6, 0, 0 }));
+    // порядок аргументов не важен
+    s = merged(Sphere(V3{ 10, 0, 0 }, 3.0), Sphere(V3{ 0, 0, 0 }, 1.0));
+    CHECK(near_(s.getRadius(), 7.0) && NearV(s.getCenter(), V3{ 6, 0, 0 }));
+    // не по оси: diff = (0,3,4), d = 5, R = (5+1+2)/2 = 4, c = (1,2,3) + (0,3,4)·3/5 = (1, 3.8, 5.4)
+    s = merged(Sphere(V3{ 1, 2, 3 }, 1.0), Sphere(V3{ 1, 5, 7 }, 2.0));
+    CHECK(near_(s.getRadius(), 4.0) && NearV(s.getCenter(), V3{ 1, 3.8, 5.4 }));
+
+    // пересекающиеся: d = 3, R = (3+2+2)/2 = 3.5, c = (1.5,0,0) — [-2, 5]
+    s = merged(Sphere(V3{ 0, 0, 0 }, 2.0), Sphere(V3{ 3, 0, 0 }, 2.0));
+    CHECK(near_(s.getRadius(), 3.5) && NearV(s.getCenter(), V3{ 1.5, 0, 0 }));
+
+    // вложенные: другая внутри этой (d = √2, √2 + 1 < 5) — без изменений
+    s = merged(Sphere(V3{ 0, 0, 0 }, 5.0), Sphere(V3{ 1, 1, 0 }, 1.0));
+    CHECK(s.getRadius() == 5.0 && NearV(s.getCenter(), V3{ 0, 0, 0 }, 0.0));
+    // эта внутри другой — результат равен другой
+    s = merged(Sphere(V3{ 1, 0, 0 }, 1.0), Sphere(V3{ 0, 0, 0 }, 5.0));
+    CHECK(s.getRadius() == 5.0 && NearV(s.getCenter(), V3{ 0, 0, 0 }, 0.0));
+    // внутреннее касание: d + r2 = 2 + 1 = 3 = r1 — тоже вложение
+    s = merged(Sphere(V3{ 0, 0, 0 }, 3.0), Sphere(V3{ 2, 0, 0 }, 1.0));
+    CHECK(s.getRadius() == 3.0 && NearV(s.getCenter(), V3{ 0, 0, 0 }, 0.0));
+
+    // общий центр: всегда побеждает бо́льший радиус (деления на d = 0 нет)
+    s = merged(Sphere(V3{ 1, 1, 1 }, 2.0), Sphere(V3{ 1, 1, 1 }, 3.0));
+    CHECK(s.getRadius() == 3.0 && NearV(s.getCenter(), V3{ 1, 1, 1 }, 0.0));
+    s = merged(Sphere(V3{ 1, 1, 1 }, 3.0), Sphere(V3{ 1, 1, 1 }, 2.0));
+    CHECK(s.getRadius() == 3.0 && NearV(s.getCenter(), V3{ 1, 1, 1 }, 0.0));
+    s = merged(Sphere(V3{ 1, 1, 1 }, 2.0), Sphere(V3{ 1, 1, 1 }, 2.0));
+    CHECK(s.getRadius() == 2.0 && NearV(s.getCenter(), V3{ 1, 1, 1 }, 0.0) && std::isfinite(s.getCenter()[0]));
+}
+
+// [1.10] Точка–треугольник (Ericson 5.1.5). Треугольник A(0,0,0), B(4,0,0), C(0,3,0)
+// в плоскости z = 0, гипотенуза BC длины 5 с внешней нормалью (3,4,0)/5.
+static void TestPointTriangleDistance()
+{
+    std::printf("[1.10] Точка–треугольник: области вершин, рёбер и грани\n");
+    auto near_ = [](double a, double b) { return std::fabs(a - b) <= 1e-12; };
+    const Triangle tri(V3{ 0, 0, 0 }, V3{ 4, 0, 0 }, V3{ 0, 3, 0 });
+    CHECK(NearV(tri.GetNormal(), V3{ 0, 0, 1 }));
+
+    // грань: проекция (1,1,0) внутри, расстояние = высота над плоскостью
+    CHECK(NearV(tri.ClosestPoint(V3{ 1, 1, 5 }), V3{ 1, 1, 0 }) && near_(tri.PointToTriangleDisctance(V3{ 1, 1, 5 }), 5.0));
+    CHECK(near_(tri.PointToTriangleDisctance(V3{ 1, 1, -5 }), 5.0));      // без знака
+    CHECK(near_(tri.PointToTriangleDisctance(V3{ 1, 1, 0 }), 0.0));       // на треугольнике
+
+    // вершина A: (-1,-2,2) -> A, √(1+4+4) = 3
+    CHECK(NearV(tri.ClosestPoint(V3{ -1, -2, 2 }), V3{ 0, 0, 0 }) && near_(tri.PointToTriangleDisctance(V3{ -1, -2, 2 }), 3.0));
+    // вершина B: BP = (2,-1,0), AB·BP = 8 >= 0, AC·BP = -3 <= 8 -> B, √5
+    CHECK(NearV(tri.ClosestPoint(V3{ 6, -1, 0 }), V3{ 4, 0, 0 }) && near_(tri.PointToTriangleDisctance(V3{ 6, -1, 0 }), std::sqrt(5.0)));
+    // вершина C: CP = (-1,2,2), AC·CP = 6 >= 0, AB·CP = -4 <= 6 -> C, √(1+4+4) = 3
+    CHECK(NearV(tri.ClosestPoint(V3{ -1, 5, 2 }), V3{ 0, 3, 0 }) && near_(tri.PointToTriangleDisctance(V3{ -1, 5, 2 }), 3.0));
+
+    // ребро AB: (2,-3,4) -> (2,0,0), √(9+16) = 5
+    CHECK(NearV(tri.ClosestPoint(V3{ 2, -3, 4 }), V3{ 2, 0, 0 }) && near_(tri.PointToTriangleDisctance(V3{ 2, -3, 4 }), 5.0));
+    // ребро AC: (-4,1,3) -> (0,1,0), √(16+9) = 5
+    CHECK(NearV(tri.ClosestPoint(V3{ -4, 1, 3 }), V3{ 0, 1, 0 }) && near_(tri.PointToTriangleDisctance(V3{ -4, 1, 3 }), 5.0));
+    // ребро BC: середина M = (2,1.5,0), P = M + (3,4,0) + (0,0,12) -> M, √(9+16+144) = 13
+    CHECK(NearV(tri.ClosestPoint(V3{ 5, 5.5, 12 }), V3{ 2, 1.5, 0 }) && near_(tri.PointToTriangleDisctance(V3{ 5, 5.5, 12 }), 13.0));
+
+    // конструктор из std::array теперь тоже считает нормаль; обход по часовой -> -z
+    const Triangle cw(std::array<double, 3>{ 0, 0, 0 }, std::array<double, 3>{ 0, 3, 0 }, std::array<double, 3>{ 4, 0, 0 });
+    CHECK(NearV(cw.GetNormal(), V3{ 0, 0, -1 }) && near_(cw.PointToTriangleDisctance(V3{ 2, -3, 4 }), 5.0));
+}
+
+// [1.11] Луч–треугольник, Мёллер–Трумбор. Треугольник V0(0,0,0), V1(1,0,0), V2(0,1,0):
+// точка грани = V0 + u·e1 + v·e2 = (u, v, 0).
+static void TestMollerTrumbore()
+{
+    std::printf("[1.11] Мёллер–Трумбор: попадание (t, u, v), промах, параллельный, позади начала\n");
+    auto near_ = [](double a, double b) { return std::fabs(a - b) <= 1e-12; };
+    const Triangle tri(V3{ 0, 0, 0 }, V3{ 1, 0, 0 }, V3{ 0, 1, 0 });
+
+    // сверху вниз: o = (0.2,0.3,1), d = (0,0,-1). p = d×e2 = (1,0,0), det = 1,
+    // u = s·p = 0.2, q = s×e1 = (0,1,-0.3), v = d·q = 0.3, t = e2·q = 1
+    auto h = RayTriIntersectionMollerTrambo(Ray(V3{ 0.2, 0.3, 1 }, V3{ 0, 0, -1 }), tri);
+    CHECK(h.has_value() && near_(h->t, 1.0) && near_(h->u, 0.2) && near_(h->v, 0.3));
+    CHECK(h.has_value() && NearV(h->point, V3{ 0.2, 0.3, 0 }));
+    // наклонный луч в (0.5, 0.25, 0) из (0,0,1): t = 1, u = 0.5, v = 0.25
+    h = RayTriIntersectionMollerTrambo(Ray(V3{ 0, 0, 1 }, V3{ 0.5, 0.25, -1 }), tri);
+    CHECK(h.has_value() && near_(h->t, 1.0) && near_(h->u, 0.5) && near_(h->v, 0.25));
+    // t — в длинах направляющей: |d| = 4, путь 2 -> t = 0.5
+    h = RayTriIntersectionMollerTrambo(Ray(V3{ 0.25, 0.25, 2 }, V3{ 0, 0, -4 }), tri);
+    CHECK(h.has_value() && near_(h->t, 0.5) && near_(h->u, 0.25) && near_(h->v, 0.25));
+    // снизу (обратная сторона, det = -1): тест двусторонний, t = 1
+    h = RayTriIntersectionMollerTrambo(Ray(V3{ 0.2, 0.3, -1 }, V3{ 0, 0, 1 }), tri);
+    CHECK(h.has_value() && near_(h->t, 1.0) && near_(h->u, 0.2) && near_(h->v, 0.3));
+    // граница: u + v = 1 ровно — попадание
+    h = RayTriIntersectionMollerTrambo(Ray(V3{ 0.5, 0.5, 1 }, V3{ 0, 0, -1 }), tri);
+    CHECK(h.has_value() && near_(h->u + h->v, 1.0));
+
+    // промахи: u + v = 1.6 > 1; u = -0.1 < 0; v = -0.1 < 0
+    CHECK(!RayTriIntersectionMollerTrambo(Ray(V3{ 0.8, 0.8, 1 }, V3{ 0, 0, -1 }), tri));
+    CHECK(!RayTriIntersectionMollerTrambo(Ray(V3{ -0.1, 0.5, 1 }, V3{ 0, 0, -1 }), tri));
+    CHECK(!RayTriIntersectionMollerTrambo(Ray(V3{ 0.5, -0.1, 1 }, V3{ 0, 0, -1 }), tri));
+    // параллельный плоскости (над ней и в ней самой): det = 0
+    CHECK(!RayTriIntersectionMollerTrambo(Ray(V3{ 0.2, 0.2, 1 }, V3{ 1, 0, 0 }), tri));
+    CHECK(!RayTriIntersectionMollerTrambo(Ray(V3{ -1, 0.2, 0 }, V3{ 1, 0, 0 }), tri));
+    // позади начала: треугольник при t = -1
+    CHECK(!RayTriIntersectionMollerTrambo(Ray(V3{ 0.2, 0.3, -1 }, V3{ 0, 0, -1 }), tri));
+}
+
+// [1.12] MultiplyAB: [1 2 3; 4 5 6]·[7 8; 9 10; 11 12] = [58 64; 139 154]
+//   58 = 1·7 + 2·9 + 3·11,  64 = 1·8 + 2·10 + 3·12,
+//  139 = 4·7 + 5·9 + 6·11, 154 = 4·8 + 5·10 + 6·12.
+static void TestMultiplyAB()
+{
+    std::printf("[1.12] Matrix: MultiplyAB 2x3 * 3x2 и доступ к элементам\n");
+    const Matrix<2, 3, double> A{ 1, 2, 3, 4, 5, 6 };
+    const Matrix<3, 2, double> B{ 7, 8, 9, 10, 11, 12 };
+    CHECK(A(0, 2) == 3 && A(1, 0) == 4 && B(2, 1) == 12);    // регрессия индексации Table
+    const Matrix<2, 2, double> C = MultiplyAB(A, B);
+    CHECK(C(0, 0) == 58 && C(0, 1) == 64 && C(1, 0) == 139 && C(1, 1) == 154);
+    CHECK((A * B) == C);
+    // 1x3 · 3x1 — скалярное произведение (1,2,3)·(4,5,6) = 32
+    const Matrix<1, 1, double> d = MultiplyAB(Matrix<1, 3, double>{ 1, 2, 3 }, Matrix<3, 1, double>{ 4, 5, 6 });
+    CHECK(d(0, 0) == 32);
+}
+
+// [1.13] ETManifoldMesh (порт GTE). Квадрат 0-1-2-3 из двух треугольников с общим
+// ребром (0,2): <0,1,2> и <0,2,3> обходят его в разные стороны — ориентированы согласованно.
+static void TestManifoldMesh()
+{
+    std::printf("[1.13] ETManifoldMesh: вставка, смежность, неманифолдное ребро, удаление\n");
+    using Mesh = Geom_Exp::ETManifoldMesh;
+    Mesh mesh;
+    Mesh::Triangle* t0 = mesh.Insert(0, 1, 2);
+    Mesh::Triangle* t1 = mesh.Insert(0, 2, 3);
+    CHECK(t0 != nullptr && t1 != nullptr);
+    CHECK(mesh.GetTriangles().size() == 2 && mesh.GetEdges().size() == 5);
+
+    // общее ребро знает оба треугольника; T[i] — сосед по ребру (V[i], V[i+1])
+    const auto shared = mesh.GetEdges().find(Geom_Exp::EdgeKey<false>(2, 0));
+    CHECK(shared != mesh.GetEdges().end() && shared->second->T[0] == t0 && shared->second->T[1] == t1);
+    CHECK(t0 && t1 && t0->T[2] == t1 && t1->T[0] == t0);              // ребро (2,0) у t0, (0,2) у t1
+    CHECK(t0 && t1 && !t0->T[0] && !t0->T[1] && !t1->T[1] && !t1->T[2]);
+    CHECK(t0 && t0->E[2] == shared->second.get() && t1->E[0] == shared->second.get());
+    CHECK(!mesh.IsClosed() && mesh.IsOriented());
+    std::vector<std::vector<int32_t>> boundary;
+    mesh.GetBoundaryPolygons(boundary, false);
+    CHECK(boundary.size() == 1 && boundary[0].size() == 4);             // контур квадрата
+
+    // повторная вставка (в том числе с циклическим сдвигом) — nullptr
+    CHECK(mesh.Insert(0, 1, 2) == nullptr && mesh.Insert(1, 2, 0) == nullptr);
+
+    // третий треугольник на ребре (0,2): по умолчанию исключение (как LogError в GTE)
+    bool threw = false;
+    try { (void)mesh.Insert(0, 2, 4); } catch (const std::runtime_error&) { threw = true; }
+    CHECK(threw);
+    // сетка не изменилась: ни ребра (4,0), созданного до проверки, ни треугольника
+    CHECK(mesh.GetTriangles().size() == 2 && mesh.GetEdges().size() == 5);
+    CHECK(mesh.GetEdges().count(Geom_Exp::EdgeKey<false>(4, 0)) == 0);
+    // без исключений — просто nullptr, сетка та же
+    CHECK(mesh.ThrowOnNonmanifoldInsertion(false) == true);
+    CHECK(mesh.Insert(2, 0, 5) == nullptr && mesh.GetTriangles().size() == 2 && mesh.GetEdges().size() == 5);
+    mesh.ThrowOnNonmanifoldInsertion(true);
+
+    // копия глубокая: та же топология, свои объекты
+    const Mesh copy(mesh);
+    CHECK(copy.GetTriangles().size() == 2 && copy.GetEdges().size() == 5 && copy.IsOriented());
+    CHECK(copy.GetTriangles().begin()->second.get() != t0 && copy.GetTriangles().begin()->second.get() != t1);
+
+    // удаление: ребро (0,2) остаётся с одним треугольником в T[0], сосед обнулён
+    CHECK(mesh.Remove(2, 0, 1));                                          // тот же <0,1,2>
+    CHECK(mesh.GetTriangles().size() == 1 && mesh.GetEdges().size() == 3);
+    const auto left = mesh.GetEdges().find(Geom_Exp::EdgeKey<false>(0, 2));
+    CHECK(left != mesh.GetEdges().end() && left->second->T[0] == t1 && left->second->T[1] == nullptr);
+    CHECK(t1 && t1->T[0] == nullptr);
+    CHECK(!mesh.Remove(0, 1, 2));
+    // теперь на ребро (0,2) снова можно поставить второй треугольник
+    CHECK(mesh.Insert(0, 4, 2) != nullptr && mesh.GetTriangles().size() == 2);
+
+    // тетраэдр с согласованными нормалями наружу: замкнут и ориентирован, 6 рёбер
+    Mesh tet;
+    tet.Insert(0, 2, 1); tet.Insert(0, 1, 3); tet.Insert(0, 3, 2); tet.Insert(1, 2, 3);
+    CHECK(tet.GetTriangles().size() == 4 && tet.GetEdges().size() == 6 && tet.IsClosed() && tet.IsOriented());
+
+    // <0,1,2> и <2,0,3> проходят ребро (2,0) в одну сторону: манифолд, но не ориентирован;
+    // MakeConsistentChirality переворачивает второй
+    Mesh flip;
+    flip.Insert(0, 1, 2); flip.Insert(2, 0, 3);
+    CHECK(flip.GetTriangles().size() == 2 && !flip.IsOriented());
+    flip.MakeConsistentChirality();
+    CHECK(flip.GetTriangles().size() == 2 && flip.IsOriented());
 }
 
 int main(int argc, char** argv)
@@ -989,6 +1357,12 @@ int main(int argc, char** argv)
     TestMatrix3x3Indexing();
     TestProjection();
     TestFrustum();
+    TestFrustumPlanesFromMatrix();
+    TestSphereMerge();
+    TestPointTriangleDistance();
+    TestMollerTrumbore();
+    TestMultiplyAB();
+    TestManifoldMesh();
     std::printf("  проверок: %d, провалено: %d\n\n", g_checks, g_failed);
     if (mode == "--tests-only") return g_failed ? 1 : 0;
 

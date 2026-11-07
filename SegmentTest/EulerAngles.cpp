@@ -1,8 +1,6 @@
-﻿#pragma once
-
-#include "Quaternion.hpp"
-#include"PrimitiveTransform.hpp"
+﻿#include"PrimitiveTransform.h"
 // подстрой под имя своего файла конверсий
+#include "Quaternion.h"
 
 namespace mathx {
 	namespace {
@@ -10,14 +8,14 @@ namespace mathx {
 		// Циклическая ли перестановка: 012 -> 120 -> 201.
 		// Циклическая сохраняет ориентацию, транспозиция двух индексов даёт
 		// отражение — отсюда общий знак sigma во всех формулах.
-		inline bool IsCyclic(int32_t i0, int32_t i1, int32_t i2)
+		bool IsCyclic(int32_t i0, int32_t i1, int32_t i2)
 		{
 			return (i1 == (i0 + 1) % 3) && (i2 == (i1 + 1) % 3);
 		}
 
 		// Защита от NaN: накопленная ошибка даёт 1.0000000001, и asin/acos
 		// вернули бы NaN без единого признака ошибки.
-		inline double Clamp11(double v)
+		double Clamp11(double v)
 		{
 			return v < -1.0 ? -1.0 : (v > 1.0 ? 1.0 : v);
 		}

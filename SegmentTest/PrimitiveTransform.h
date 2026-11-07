@@ -1,6 +1,7 @@
 ﻿#pragma once
-#include "Matrix3x3.hpp"
-#include "Quaternion.hpp"
+#include "Math.h"          // Radian, Degree
+#include "Matrix3x3.h"
+#include "Quaternion.h"
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -54,10 +55,15 @@ namespace mathx {
 	// Оси хранятся РЯДОМ с углами: в Ogre шесть функций имеют одинаковую
 	// сигнатуру, но третий параметр в XYZ значит поворот вокруг Z, а в XZY —
 	// вокруг Y. Здесь смысл угла виден из данных, а не из имени функции.
+	//
+	// Единственный тип углов Эйлера в проекте. В Math.h был глобальный
+	// дубликат EulerAngles/EulerResult без пользователей; при
+	// using namespace mathx имена становились неоднозначными. Он удалён,
+	// его типизированные геттеры перенесены сюда.
 	struct EulerAngles
 	{
 		std::array<int32_t, 3> axis{ 0, 1, 2 };   // осмысленная конвенция по умолчанию
-		std::array<double, 3> angle{ 0.0, 0.0, 0.0 };
+		std::array<double, 3> angle{ 0.0, 0.0, 0.0 };   // ВСЕГДА радианы
 		EulerResult result = EulerResult::INVALID;
 
 		EulerAngles() = default;
@@ -67,6 +73,10 @@ namespace mathx {
 
 		bool IsValid()  const { return result != EulerResult::INVALID; }
 		bool IsUnique() const { return result == EulerResult::UNIQUE; }
+
+		// Явные, безопасные точки входа/выхода на границу с UI/аниматором.
+		Radian AngleRadians(int32_t i) const { return Radian(angle[i]); }
+		Degree AngleDegrees(int32_t i) const { return Degree(Radian(angle[i])); }
 	};
 
 	// ---------------------------------------------------------------------------
@@ -74,17 +84,7 @@ namespace mathx {
 	// ---------------------------------------------------------------------------
 
 	// Элементарный поворот вокруг оси: заполняются только 5 ненулевых элементов.
-	inline Matrix3x3 AxisRotation(int32_t axis, double angle)
-	{
-		const double c = std::cos(angle), s = std::sin(angle);
-		const int32_t j = (axis + 1) % 3, k = (axis + 2) % 3;
-
-		Matrix3x3 m;                        // конструктор по умолчанию обнуляет
-		m(axis, axis) = 1.0;
-		m(j, j) = c;   m(j, k) = -s;
-		m(k, j) = s;   m(k, k) = c;
-		return m;
-	}
+	Matrix3x3 AxisRotation(int32_t axis, double angle);
 
 	// Домножение СЛЕВА на элементарный поворот: m <- R_axis(angle) * m.
 	//
@@ -92,28 +92,12 @@ namespace mathx {
 	// строка m проходит НЕИЗМЕННОЙ. Меняются только две строки — 12 умножений
 	// вместо 27 у полного matmul, где две трети это умножения на 0 и 1.
 	// Замерено: 92% экономии против AxisRotation + полное умножение.
-	inline void PreRotate(Matrix3x3& m, int32_t axis, double angle)
-	{
-		const double c = std::cos(angle), s = std::sin(angle);
-		const int32_t j = (axis + 1) % 3, k = (axis + 2) % 3;
-
-		for (int32_t col = 0; col < 3; ++col) {
-			const double vj = m(j, col), vk = m(k, col);
-			m(j, col) = c * vj - s * vk;
-			m(k, col) = s * vj + c * vk;
-		}
-	}
+	void PreRotate(Matrix3x3& m, int32_t axis, double angle);
 
 	// Сборка матрицы из углов через PreRotate.
 	// Наивный путь (три полные матрицы + два полных умножения) стоит 54 умножения;
 	// здесь ~24. Замерено: на 66% быстрее при идентичном результате.
-	inline Matrix3x3 EulerToMatrix(const EulerAngles& e)
-	{
-		Matrix3x3 m = AxisRotation(e.axis[2], e.angle[2]);
-		PreRotate(m, e.axis[1], e.angle[1]);
-		PreRotate(m, e.axis[0], e.angle[0]);
-		return m;
-	}
+	Matrix3x3 EulerToMatrix(const EulerAngles& e);
 
 	// ---------------------------------------------------------------------------
 	//  Разложение — ХОЛОДНЫЕ функции, тела в EulerAngles.cpp.
