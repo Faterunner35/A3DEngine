@@ -2,6 +2,8 @@
 #include"GeomPPrimitives.h"
 #include"Matrix.h"
 
+// AABBBoundingVolume — не часть математической библиотеки, поэтому живёт вне
+// mathx и квалифицирует математические типы явно (mathx::Vector, ...).
 
 struct AABBBoundingVolume
 {
@@ -11,17 +13,19 @@ struct AABBBoundingVolume
 	{
 	}
 
-	void GetSplittingAxis(Vector<3, double>& origin) const
+	// Ось разбиения (как GetSplittingAxis для AlignedBox в GTE): начало —
+	// центр бокса, направление — ось с наибольшим полуразмером. Раньше
+	// direction вычислялось в локальной переменной и терялось.
+	void GetSplittingAxis(mathx::Vector<3, double>& origin, mathx::Vector<3, double>& direction) const
 	{
-		double zero = static_cast<float>(0);
-		double one = static_cast<float>(1);
-		double half = static_cast<float>(0.5);
-
+		double const zero = 0.0;
+		double const one = 1.0;
+		double const half = 0.5;
 
 		origin = half * (box.max + box.min);
-		Vector<3, double> extents = half * (box.max - box.min);
-		float projectionExtent = extents[0];
-		Vector<3, double> direction({ one, zero, zero });
+		mathx::Vector<3, double> extents = half * (box.max - box.min);
+		double projectionExtent = extents[0];
+		direction = mathx::Vector<3, double>{ one, zero, zero };
 		if (extents[1] > projectionExtent)
 		{
 			projectionExtent = extents[1];
@@ -35,7 +39,7 @@ struct AABBBoundingVolume
 	}
 
 
-	inline void transformAffine(const Matrix<4, 4,double>& matrix);
+	inline void transformAffine(const mathx::Matrix<4, 4, double>& matrix);
 
 	/// Returns whether or not this box intersects another.
 	inline bool intersects(const AABBBoundingVolume& b2) const;
@@ -50,13 +54,13 @@ struct AABBBoundingVolume
 	inline bool contains(const AABBBoundingVolume& other) const;
 
 	/// Tests whether the given point contained by this box.
-	inline bool contains(const Vector<3,double>& v) const;
+	inline bool contains(const mathx::Vector<3, double>& v) const;
 
 	/// Returns the square of the minimum distance between a given point and any part of the box.
-	inline double squaredDistance(const Vector<3,double>& v) const;
+	inline double squaredDistance(const mathx::Vector<3, double>& v) const;
 
 	/// Returns the minimum distance between a given point and any part of the box.
-	inline double distance(const Vector<3,double>& v) const;
+	inline double distance(const mathx::Vector<3, double>& v) const;
 
 	/// Returns the radius of a sphere enclosing the aabb from the outside at center mCenter
 	inline double getRadius() const;
@@ -65,7 +69,7 @@ struct AABBBoundingVolume
 	inline double getRadiusOrigin() const;
 
 
-	AlignedBox<double>box;
+	mathx::AlignedBox<double> box;
 };
 
 

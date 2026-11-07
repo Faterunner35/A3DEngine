@@ -13,7 +13,7 @@ public:
 	{
 		T const negOne = static_cast<T>(-1);
 		T const one = static_cast<T>(1);
-		for (int32_t i = 0; i < 2; ++i)
+		for (int32_t i = 0; i < 3; ++i)
 		{
 			min[i] = negOne;
 			max[i] = one;
