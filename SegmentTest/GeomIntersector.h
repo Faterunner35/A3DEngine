@@ -3,7 +3,15 @@
 #include"Plane.h"
 #include"Ray.h"
 #include"Sphere.h"
+#include<algorithm>
+#include<array>
+#include<cfloat>
+#include<cmath>
+#include<cstdint>
+#include<limits>
+#include<memory>
 #include<tuple>
+#include<utility>
 
 
 
@@ -67,8 +75,10 @@ public:
 		Vector<3, double> dist_segment = segment.p[1] - segment.p[0];
 		Vector<3, double> point_segment_dist = point - segment.p[0];
 
-		Vector<3, double> a = Cross(point_segment_dist, segment.p[1]);
-		return (std::sqrt(DotProduct(a, a) / DotProduct(segment.p[1], segment.p[1])));
+		// Расстояние до прямой отрезка: |(P − p0) × (p1 − p0)| / |p1 − p0|.
+		// Было: вместо направления p1 − p0 подставлялась сама точка p1.
+		Vector<3, double> a = Cross(point_segment_dist, dist_segment);
+		return (std::sqrt(DotProduct(a, a) / DotProduct(dist_segment, dist_segment)));
 
 	}
 
@@ -251,7 +261,7 @@ public:
 	}
 
 
-	bool overlap(float min1, float max1, float min2, float max2) {
+	bool overlap(double min1, double max1, double min2, double max2) {
 		return !(max1 < min2 || max2 < min1);
 	}
 
@@ -288,7 +298,7 @@ public:
 			}
 
 			// Project both boxes onto the axis
-			float min1, max1, min2, max2;
+			double min1, max1, min2, max2;
 		    box1.projectOntoAxis(box1, axis, min1, max1);
 		    box2.projectOntoAxis(box2, axis, min2, max2);
 
