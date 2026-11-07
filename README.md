@@ -9,6 +9,8 @@ The project is a research platform. Each subsystem is written from first princip
 ## What is here now
 
 ### Math core (`SegmentTest/`)
+Headers hold declarations, templates and small hot-path inline code (operators, dot/cross, per-object tests); heavier non-template routines live in the matching `.cpp`.
+
 | File | What it does |
 |---|---|
 | `Geomerty.h` | `Vector<N,T>`: dot, cross, robust length, Gram–Schmidt orthonormalisation |
@@ -16,7 +18,7 @@ The project is a research platform. Each subsystem is written from first princip
 | `Affine4X3.h` | Affine transform stored as 3×4 (the `0 0 0 1` row is implied): composition in 36 multiplies, inverse via cofactors with a relative (Hadamard) singularity test, rigid inverse, normal matrix `sign(det)·cof(A)` |
 | `Quaternion.h`, `QuatSquad.h`, `QuatInterpolationPrecomputed.h` | Quaternions, slerp/squad interpolation |
 | `TransfromMatrix.h` | `MakeTransform(T, R, S)` and its exact inverse built from TRS without inverting a matrix |
-| `EulerAngles.h`, `PrimitiveTransform.h` | Euler angles, elementary rotations |
+| `PrimitiveTransform.h` (+ `EulerAngles.cpp`) | Euler angles, elementary rotations |
 
 ### Geometry
 `Plane.h`, `Ray.h`, `Sphere.h`, `AABB.h`, `GeomIntersector.h`, `ManifoldMesh.h`: primitives, intersections, and a manifold triangle mesh with edge/triangle adjacency.

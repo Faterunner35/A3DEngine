@@ -29,27 +29,11 @@ namespace mathx {
 	// совпала с этой касательной — это и даёт непрерывность скорости.
 	//
 	// ПРЕДУСЛОВИЕ: q0, q1, q2 единичные.
-	inline void quat_intermediate(Quaternion const& q0,
+	void quat_intermediate(Quaternion const& q0,
 		Quaternion const& q1,
 		Quaternion const& q2,
 		Quaternion& outA,
-		Quaternion& outB)
-	{
-		assert(std::fabs(quat_length(q0) - 1.0) < 1e-6 &&
-			std::fabs(quat_length(q1) - 1.0) < 1e-6 &&
-			std::fabs(quat_length(q2) - 1.0) < 1e-6 &&
-			"quat_intermediate: inputs must be unit quaternions");
-
-		const Quaternion P0 = quat_conjugate(q0) * q1;   // для единичного conj == inverse
-		const Quaternion P1 = quat_conjugate(q1) * q2;
-
-		const Quaternion l0 = quat_log(P0);
-		const Quaternion l1 = quat_log(P1);
-		const Quaternion arg = (l0 - l1) * 0.25;
-
-		outA = q1 * quat_exp(arg);
-		outB = q1 * quat_exp(-arg);
-	}
+		Quaternion& outB);
 
 	// Сферическая кубическая интерполяция: кривая от p до q, форму задают
 	// контрольные точки a (исходящая из p) и b (входящая в q).
@@ -58,17 +42,11 @@ namespace mathx {
 	// первый аргумент, то есть кривая проходит через p и q ТОЧНО, контрольные
 	// точки на концы не влияют. Максимум 0.5 при t=0.5 — там они максимально
 	// оттягивают кривую. Это сферический аналог де Кастельжо.
-	inline Quaternion quat_squad(double t,
+	Quaternion quat_squad(double t,
 		Quaternion const& p,
 		Quaternion const& a,
 		Quaternion const& b,
 		Quaternion const& q,
-		bool shortestPath = true)
-	{
-		const double outerT = 2.0 * t * (1.0 - t);
-		const Quaternion s1 = quat_slerp(t, p, q, shortestPath);   // прямая дуга
-		const Quaternion s2 = quat_slerp(t, a, b, shortestPath);   // дуга контрольных точек
-		return quat_slerp(outerT, s1, s2, shortestPath);
-	}
+		bool shortestPath = true);
 
 } // namespace mathx

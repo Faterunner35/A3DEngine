@@ -109,32 +109,6 @@
 		double degree;
 	};
 
-	// ---- Реализации, требующие обоих классов сразу (как в оригинале) ----
-
-
-	inline Radian::Radian(const Degree& d) : radian(d.ValueDegrees()* detail::ANGLE_DEG_TO_RAD) {}
-
-	inline Radian& Radian::operator=(const Degree& d) {
-		radian = d.ValueDegrees() * detail::ANGLE_DEG_TO_RAD;
-		return *this;
-	}
-	inline Radian Radian::operator+(const Degree& d) const {
-		return Radian(radian + d.ValueDegrees() * detail::ANGLE_DEG_TO_RAD);
-	}
-	inline Radian& Radian::operator+=(const Degree& d) {
-		radian += d.ValueDegrees() * detail::ANGLE_DEG_TO_RAD;
-		return *this;
-	}
-	inline Radian Radian::operator-(const Degree& d) const {
-		return Radian(radian - d.ValueDegrees() * detail::ANGLE_DEG_TO_RAD);
-	}
-	inline Radian& Radian::operator-=(const Degree& d) {
-		radian -= d.ValueDegrees() * detail::ANGLE_DEG_TO_RAD;
-		return *this;
-	}
-
-	inline double Radian::ValueDegrees() const { return radian * detail::ANGLE_RAD_TO_DEG; }
-	inline double Degree::ValueRadians() const { return degree * detail::ANGLE_DEG_TO_RAD; }
 
 
 
@@ -279,19 +253,10 @@ namespace mathx {
 	//  Заворачивание диапазонов
 	// ---------------------------------------------------------------------------
 	// Угол в [-PI, PI).
-	inline double WrapAngle(double radians) {
-		double r = std::fmod(radians + PI, TWO_PI);
-		if (r < 0.0) r += TWO_PI;
-		return r - PI;
-	}
+	double WrapAngle(double radians);
 
 	// Значение в [0,1).
-	inline double WrapUnit(double v) {
-		double intPart;
-		double frac = std::modf(v, &intPart);
-		if (frac < 0.0) frac += 1.0;
-		return frac;
-	}
+	double WrapUnit(double v);
 
 	// ---------------------------------------------------------------------------
 	//  Целочисленные и битовые утилиты
