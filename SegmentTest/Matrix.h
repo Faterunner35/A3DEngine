@@ -1,5 +1,8 @@
 #pragma once
+#include"Geomerty.h"
 #include<array>
+#include<cstdint>
+#include<initializer_list>
 #include<vector>
 
 namespace mathx
@@ -248,6 +251,11 @@ namespace mathx
 		}
 
 	protected:
+		// Плоское хранение: (r,c) -> r*NumCols + c (по строкам) или
+		// c*NumRows + r (по столбцам, по умолчанию, как в GTE).
+		// Раньше константный и неконстантный operator() считали индекс
+		// по-разному (запись шла в транспонированную ячейку, а для
+		// неквадратных — в чужую), а ветка по строкам умножала на NumRows.
 		class Table
 		{
 		public:
@@ -255,65 +263,42 @@ namespace mathx
 				:
 				mStorage{}
 			{
-#if defined(GTE_USE_ROW_MAJOR)
-				for (size_t r = 0; r < NumRows; ++r)
-				{   
-				    for(size_t c=0;c<NumCols;c++)
-					{
-
-					mStorage[r*NumRows+c] = (Real)0;
-               
-				    }
-			}
-#else
-				for (size_t c = 0; c < NumCols; ++c)
-				{
-					for (size_t r = 0; r < NumRows; ++r)
-					{
-						mStorage[c*NumCols+r] = (Real)0;
-					}
-				}
-#endif
 			}
 
 			// Storage-order-independent element access as 2D array.
 			inline Real const& operator()(int32_t r, int32_t c) const
 			{
-#if defined(GTE_USE_ROW_MAJOR)
-				return mStorage[r*NumRows+c];
-#else
-				return mStorage[r*NumCols+c];
-#endif
+				return mStorage[Index(r, c)];
 			}
 
 			inline Real& operator()(int32_t r, int32_t c)
 			{
-#if defined(GTE_USE_ROW_MAJOR)
-				return mStorage[r*NumRows+c];
-#else
-				return mStorage[c*NumCols+r];
-#endif
+				return mStorage[Index(r, c)];
 			}
 
 			// Element access as 1D array.  Use this internally only when
 			// the 2D storage order is not relevant.
 			inline Real const& operator[](int32_t i) const
 			{
-				Real const* elements = &mStorage[0];
-				return elements[i];
+				return mStorage[i];
 			}
 
 			inline Real& operator[](int32_t i)
 			{
-				Real* elements = &mStorage[0];
-				return elements[i];
+				return mStorage[i];
 			}
 
+			std::array<Real, NumRows * NumCols> mStorage;
+
+		private:
+			static constexpr size_t Index(int32_t r, int32_t c)
+			{
 #if defined(GTE_USE_ROW_MAJOR)
-			std::array<Real,NumCols*NumRows> mStorage;
+				return static_cast<size_t>(r) * NumCols + static_cast<size_t>(c);
 #else
-			std::array<Real,NumRows*NumCols> mStorage;
+				return static_cast<size_t>(c) * NumRows + static_cast<size_t>(r);
 #endif
+			}
 		};
 
 		Table mTable;
@@ -537,23 +522,20 @@ namespace mathx
 		Matrix<NumCommon, NumCols, Real> const& B)
 
 	{
-	    Matrix<NumRows,NumCols,Real>output;
-
-
-		for (int i = 0; i < NumRows; i++)
+		// Конструктор по умолчанию обнуляет матрицу, поэтому можно сразу
+		// накапливать. Раньше результат считался, но не возвращался.
+		Matrix<NumRows, NumCols, Real> output;
+		for (int32_t i = 0; i < NumRows; ++i)
 		{
-			for (int j = 0; j < NumCols; j++)
+			for (int32_t j = 0; j < NumCols; ++j)
 			{
-
-				for (int k = 0; k <NumCommon; k++)
+				for (int32_t k = 0; k < NumCommon; ++k)
 				{
-				  
-				 output(i,j)+= A(i,k)*B(k,j);
-
-			    }
+					output(i, j) += A(i, k) * B(k, j);
+				}
 			}
 		}
-
+		return output;
 	}
 
 	
