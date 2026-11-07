@@ -801,7 +801,7 @@ static void StressOperationCosts(uint32_t n)
     // Одна смена родителя, гарантированно ломающая порядок: массивы отсортированы
     // по глубине, поэтому корень стоит левее самого глубокого узла. Корень,
     // подвешенный к нему, получает родителя ПРАВЕЕ себя → Update перестраивает всё.
-    auto depthOf = [&](Entity e) { int d = 0; for (Entity a = s->tc.Parent(e); !a.IsNull(); a = s->tc.Parent(a)) ++d; return d; };
+    auto depthOf = [&](Entity e) { int d = 0; for (Entity p = s->tc.Parent(e); !p.IsNull(); p = s->tc.Parent(p)) ++d; return d; };
     Entity deepest = es[0];
     int maxDepth = 0;
     for (Entity e : es) { const int d = depthOf(e); if (d > maxDepth) { maxDepth = d; deepest = e; } }
@@ -952,8 +952,8 @@ static void TestFrustum()
         CHECK(maxDiff(OgreProjectionRS(oo) * S, O.GetProjectionMatrix()) < 1e-12);
         CHECK(isIdentity(O.GetProjectionMatrix() * O.GetInverseProjectionMatrix()));
         {
-            const V4 q = O.GetProjectionMatrix() * V4{ 0.0, 0.0, 40.0, 1.0 };
-            CHECK(near_(O.CameraDepth(q[2] / q[3]), 40.0, 1e-9) && near_(O.CameraDepth(0.0), n));
+            const V4 qo = O.GetProjectionMatrix() * V4{ 0.0, 0.0, 40.0, 1.0 };
+            CHECK(near_(O.CameraDepth(qo[2] / qo[3]), 40.0, 1e-9) && near_(O.CameraDepth(0.0), n));
         }
 
         // ортография с камерой внутри ящика: n = -5, f = 5 (z = 0 ничем не выделен)

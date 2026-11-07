@@ -10,9 +10,12 @@ namespace mathx
 class  Ray
 {
 protected:
+    // Направление НЕ нормируется: t в getPoint(t) измеряется в длинах mDirection.
+    // Был ещё член double direction (GetScalarDirection): его никто не
+    // инициализировал и не использовал, а параметр конструктора с тем же
+    // именем его затенял (-Wshadow). Удалён вместе с геттером.
     Vector<3,double> mOrigin;
     Vector<3,double> mDirection;
-    double direction;
 
 public:
     Ray() : mOrigin({0,0,0}), mDirection({0,0,1}) {}
@@ -37,11 +40,6 @@ public:
 
     /** Gets the position of a point t units along the ray. */
     Vector<3,double> operator*(double t) const { return getPoint(t); }
-
-    inline double  GetScalarDirection() const
-    {
-        return direction;
-    }
 
     /** Tests whether this ray intersects the given plane.
     @return A pair structure where the first element indicates whether
