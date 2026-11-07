@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "Quaternion.hpp"
+#include "Quaternion.h"
 #include <cmath>
 #include <cassert>
 

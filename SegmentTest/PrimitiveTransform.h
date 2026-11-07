@@ -1,6 +1,6 @@
 ﻿#pragma once
-#include "Matrix3x3.hpp"
-#include "Quaternion.hpp"
+#include "Matrix3x3.h"
+#include "Quaternion.h"
 #include <array>
 #include <cmath>
 #include <cstdint>

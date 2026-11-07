@@ -1,11 +1,11 @@
 ﻿#pragma once
 #include"Geomerty.h"
-#include"Matrix3x3.hpp"
-#include"Matrxi4x4.hpp"
-#include"Entity.hpp"
-#include"TransfromMatrix.hpp"
-#include"Affine4X3.hpp"
-#include"Quaternion.hpp"
+#include"Matrix3x3.h"
+#include"Matrxi4x4.h"
+#include"Entity.h"
+#include"TransfromMatrix.h"
+#include"Affine4X3.h"
+#include"Quaternion.h"
 #include<vector>
 
 class TransformComponent

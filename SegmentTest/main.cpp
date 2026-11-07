@@ -29,8 +29,8 @@
 //  Сборка:  cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 //  Запуск:  build/engine_tests   (Windows: build\Release\engine_tests.exe)
 // =============================================================================
-#include "TranformManager.hpp"
-#include "Frustum.hpp"
+#include "TranformManager.h"
+#include "Frustum.h"
 
 #include <algorithm>
 #include <chrono>

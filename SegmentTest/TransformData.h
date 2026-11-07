@@ -1,8 +1,8 @@
 ﻿#pragma once
 #include"Geomerty.h"
-#include"Quaternion.hpp"
+#include"Quaternion.h"
 #include"Matrix.h"
-#include"Affine4X3.hpp"
+#include"Affine4X3.h"
 
 namespace mathx
 { 

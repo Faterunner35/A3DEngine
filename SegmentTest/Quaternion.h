@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include"Geomerty.h"
-#include"Matrix3x3.hpp"
+#include"Matrix3x3.h"
 #include"Math.h"
 #include <array>
 #include <cstdint>

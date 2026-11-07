@@ -1,7 +1,7 @@
 ﻿#pragma once
-#include "Affine4X3.hpp"
-#include "Quaternion.hpp"
-#include"Matrix3x3.hpp"
+#include "Affine4X3.h"
+#include "Quaternion.h"
+#include"Matrix3x3.h"
 #include <cmath>
 #include <cassert>
 #include <optional>

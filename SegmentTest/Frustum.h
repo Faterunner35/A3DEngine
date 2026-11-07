@@ -1,7 +1,7 @@
 #pragma once
 #include "Geomerty.h"      // Vector
 #include "Math.h"          // Radian, Tan
-#include "Matrxi4x4.hpp"   // Matrix4x4
+#include "Matrxi4x4.h"   // Matrix4x4
 #include "Plane.h"         // Plane
 #include <array>
 #include <cassert>

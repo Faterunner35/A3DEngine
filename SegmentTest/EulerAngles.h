@@ -1,7 +1,7 @@
 ﻿#pragma once
 
-#include "Quaternion.hpp"
-#include"PrimitiveTransform.hpp"
+#include "Quaternion.h"
+#include"PrimitiveTransform.h"
 // подстрой под имя своего файла конверсий
 
 namespace mathx {
