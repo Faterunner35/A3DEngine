@@ -1271,6 +1271,38 @@ static void TestMultiplyAB()
     CHECK(d(0, 0) == 32);
 }
 
+// [1.14] Сборка Affine4x3 / Matrix4x4 из готовой 3x3 и переноса.
+// L = поворот на 90° вокруг y (x -> -z) с масштабом 2, t = (2, 0.5, 10).
+static void TestFromLinearAndTranslation()
+{
+    std::printf("[1.14] Affine4x3(L, t) и Matrix4x4(L, t): сборка из 3x3 и переноса\n");
+    const Matrix3x3 L(0, 0, 2,
+                      0, 2, 0,
+                     -2, 0, 0);
+    const Vector<3, double> t{ 2.0, 0.5, 10.0 };
+
+    const Affine4x3 A(L, t);
+    CHECK(A(0, 2) == 2 && A(2, 0) == -2 && A(1, 1) == 2);          // линейная часть на месте
+    CHECK(A(0, 3) == 2 && A(1, 3) == 0.5 && A(2, 3) == 10);         // перенос — последний столбец
+    // точка (1, 0, 0): L·p = (0, 0, -2), плюс t -> (2, 0.5, 8)
+    const Vector<3, double> p = TransformPoint(A, Vector<3, double>{ 1.0, 0.0, 0.0 });
+    CHECK(p[0] == 2 && p[1] == 0.5 && p[2] == 8);
+    // направление переносом не задевается: L·(1, 0, 0) = (0, 0, -2)
+    const Vector<3, double> v = TransformDirection(A, Vector<3, double>{ 1.0, 0.0, 0.0 });
+    CHECK(v[0] == 0 && v[1] == 0 && v[2] == -2);
+    // обратно: L и t достаются без потерь
+    CHECK(GetLinear(A) == L);
+    const Vector<3, double> tt = GetTranslation(A);
+    CHECK(tt[0] == 2 && tt[1] == 0.5 && tt[2] == 10);
+
+    const Matrix4x4 M(L, t);
+    bool same = true;
+    for (int32_t r = 0; r < 3; ++r)
+        for (int32_t c = 0; c < 4; ++c) same = same && (M(r, c) == A(r, c));
+    CHECK(same);
+    CHECK(M(3, 0) == 0 && M(3, 1) == 0 && M(3, 2) == 0 && M(3, 3) == 1);  // нижняя строка (0 0 0 1)
+}
+
 // [1.13] ETManifoldMesh (порт GTE). Квадрат 0-1-2-3 из двух треугольников с общим
 // ребром (0,2): <0,1,2> и <0,2,3> обходят его в разные стороны — ориентированы согласованно.
 static void TestManifoldMesh()
@@ -1363,6 +1395,7 @@ int main(int argc, char** argv)
     TestMollerTrumbore();
     TestMultiplyAB();
     TestManifoldMesh();
+    TestFromLinearAndTranslation();
     std::printf("  проверок: %d, провалено: %d\n\n", g_checks, g_failed);
     if (mode == "--tests-only") return g_failed ? 1 : 0;
 

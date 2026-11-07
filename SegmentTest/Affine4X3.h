@@ -23,6 +23,15 @@ namespace mathx {
 			: storage{ m00,m01,m02,m03, m10,m11,m12,m13, m20,m21,m22,m23 } {
 		}
 
+		// Сборка из готовой линейной части L (3x3) и переноса t: [ L | t ].
+		// Столбцы L — оси объекта в мире (с масштабом), t — его позиция.
+		// Точка: p' = L·p + t, направление (w = 0): v' = L·v.
+		Affine4x3(const Matrix3x3& L, const Vector<3, double>& t)
+			: storage{ L(0, 0), L(0, 1), L(0, 2), t[0],
+					   L(1, 0), L(1, 1), L(1, 2), t[1],
+					   L(2, 0), L(2, 1), L(2, 2), t[2] } {
+		}
+
 		double& operator()(int32_t r, int32_t c) { return storage[r * 4 + c]; }
 		double const& operator()(int32_t r, int32_t c) const { return storage[r * 4 + c]; }
 
@@ -127,6 +136,13 @@ namespace mathx {
 	}
 	inline void SetTranslation(Affine4x3& m, const Vector<3, double>& t) {
 		m[3] = t[0]; m[7] = t[1]; m[11] = t[2];
+	}
+
+	// Линейная часть L — обратная операция к Affine4x3(L, t).
+	inline Matrix3x3 GetLinear(const Affine4x3& m) {
+		return Matrix3x3(m[0], m[1], m[2],
+			m[4], m[5], m[6],
+			m[8], m[9], m[10]);
 	}
 	inline Affine4x3 MakeTranslation(double x, double y, double z) {
 		Affine4x3 m;               // уже единичная
